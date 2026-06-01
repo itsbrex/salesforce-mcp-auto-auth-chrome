@@ -5,33 +5,21 @@
   "mcpServers": {
     "salesforce-prod": {
       "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/kugamon/salesforce-mcp-auto-auth-chrome",
-        "salesforce-mcp-auto-auth-chrome"
-      ],
+      "args": ["salesforce-mcp-auto-auth-chrome"],
       "env": {
         "SALESFORCE_INSTANCE_URL": "https://yourcompany.my.salesforce.com"
       }
     },
     "salesforce-sandbox": {
       "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/kugamon/salesforce-mcp-auto-auth-chrome",
-        "salesforce-mcp-auto-auth-chrome"
-      ],
+      "args": ["salesforce-mcp-auto-auth-chrome"],
       "env": {
         "SALESFORCE_INSTANCE_URL": "https://yourcompany--sandbox.sandbox.my.salesforce.com"
       }
     },
     "salesforce-dev1": {
       "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/kugamon/salesforce-mcp-auto-auth-chrome",
-        "salesforce-mcp-auto-auth-chrome"
-      ],
+      "args": ["salesforce-mcp-auto-auth-chrome"],
       "env": {
         "SALESFORCE_INSTANCE_URL": "https://yourname-dev-ed.develop.my.salesforce.com"
       }

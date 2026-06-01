@@ -1,5 +1,10 @@
 # Salesforce MCP Server — Auto-Auth From Chrome
 
+[![PyPI](https://img.shields.io/pypi/v/salesforce-mcp-auto-auth-chrome?label=pypi&color=blue)](https://pypi.org/project/salesforce-mcp-auto-auth-chrome/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](#)
+
 A local MCP server that exposes **14 Salesforce tools** (SOQL, SOSL, CRUD, Apex execute, tooling API, REST) inside Claude Desktop — and **auto-refreshes the session from your Chrome browser** so you never have to paste a token into your config again. Wraps [`mcp-salesforce-connector`](https://pypi.org/project/mcp-salesforce-connector/) on PyPI; runs as a stdio MCP launched per-org by Claude Desktop.
 
 No connected app, no OAuth dance, no copy-pasting session ids — just stay logged into the org in Chrome.
@@ -41,8 +46,8 @@ If Claude Desktop already has filesystem access to your home directory (Cowork m
 ```
 Add a Salesforce MCP entry to my Claude Desktop config named
 `salesforce-mydevorg` for the org at
-`https://yourdomain.my.salesforce.com`, using the wrapper at
-`github.com/kugamon/salesforce-mcp-auto-auth-chrome`. Don't set a
+`https://yourdomain.my.salesforce.com`. The MCP command should be
+`uvx salesforce-mcp-auto-auth-chrome` (it's on PyPI). Don't set a
 SALESFORCE_ACCESS_TOKEN — the wrapper reads it from Chrome. Make a
 backup of my existing config first.
 ```
@@ -66,11 +71,7 @@ If you'd rather edit JSON by hand:
   "mcpServers": {
     "salesforce-mydevorg": {
       "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/kugamon/salesforce-mcp-auto-auth-chrome",
-        "salesforce-mcp-auto-auth-chrome"
-      ],
+      "args": ["salesforce-mcp-auto-auth-chrome"],
       "env": {
         "SALESFORCE_INSTANCE_URL": "https://yourdomain.my.salesforce.com"
       }
@@ -268,4 +269,4 @@ Every API call. The `sid` from Chrome is read fresh each time — Salesforce ses
 
 ## Version history
 
-- **v0.1.0** — initial release. 14 tools (via mcp-salesforce-connector 0.1.15). Chrome-only, macOS-only, per-call `sid` refresh.
+- **v0.1.0** — initial release on PyPI. 14 tools (via mcp-salesforce-connector 0.1.15). Chrome-only, macOS-only, per-call `sid` refresh.
