@@ -1,0 +1,40 @@
+{
+  "_comment_1": "Example Claude Desktop config. The file lives at ~/Library/Application Support/Claude/claude_desktop_config.json on macOS.",
+  "_comment_2": "Copy any of these mcpServers entries into your real config and replace the My Domain URL.",
+  "_comment_3": "Notice: NO SALESFORCE_ACCESS_TOKEN. The wrapper pulls it from Chrome on every call.",
+  "mcpServers": {
+    "salesforce-prod": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/kugamon/salesforce-mcp-auto-auth-chrome",
+        "salesforce-mcp-auto-auth-chrome"
+      ],
+      "env": {
+        "SALESFORCE_INSTANCE_URL": "https://yourcompany.my.salesforce.com"
+      }
+    },
+    "salesforce-sandbox": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/kugamon/salesforce-mcp-auto-auth-chrome",
+        "salesforce-mcp-auto-auth-chrome"
+      ],
+      "env": {
+        "SALESFORCE_INSTANCE_URL": "https://yourcompany--sandbox.sandbox.my.salesforce.com"
+      }
+    },
+    "salesforce-dev1": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/kugamon/salesforce-mcp-auto-auth-chrome",
+        "salesforce-mcp-auto-auth-chrome"
+      ],
+      "env": {
+        "SALESFORCE_INSTANCE_URL": "https://yourname-dev-ed.develop.my.salesforce.com"
+      }
+    }
+  }
+}

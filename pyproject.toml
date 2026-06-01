@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "salesforce-mcp-auto-auth-chrome"
+version = "0.1.0"
+description = "Drop-in wrapper for mcp-salesforce-connector that auto-refreshes the Salesforce session from your Chrome browser — no more pasting tokens."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Kugamon", email = "contact@kugamon.com" },
+]
+keywords = [
+    "salesforce",
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "claude-desktop",
+    "chrome",
+    "authentication",
+    "session-cookie",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+requires-python = ">=3.12"
+dependencies = [
+    "mcp-salesforce-connector>=0.1.15",
+    "pycookiecheat>=0.7",
+    "simple-salesforce>=1.12",
+]
+
+[project.urls]
+Homepage = "https://github.com/kugamon/salesforce-mcp-auto-auth-chrome"
+Repository = "https://github.com/kugamon/salesforce-mcp-auto-auth-chrome"
+Issues = "https://github.com/kugamon/salesforce-mcp-auto-auth-chrome/issues"
+
+[project.scripts]
+salesforce-mcp-auto-auth-chrome = "salesforce_mcp_auto_auth_chrome.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/salesforce_mcp_auto_auth_chrome"]
