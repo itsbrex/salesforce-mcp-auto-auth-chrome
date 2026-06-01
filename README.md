@@ -34,21 +34,32 @@ The package is a thin Python shim around `mcp-salesforce-connector`. On every AP
 
 ## Setup — Part 1: Add to Claude Desktop (~1 min, one-time)
 
-> **Fastest path: have Claude do it for you.** If Claude Desktop already has filesystem access to your home directory (Cowork mode users do by default), just paste the following prompt into a fresh Claude chat:
->
-> *"Add a Salesforce MCP entry to my Claude Desktop config named `salesforce-mydevorg` for the org at `https://yourdomain.my.salesforce.com`, using the wrapper at `github.com/kugamon/salesforce-mcp-auto-auth-chrome`. Don't set a `SALESFORCE_ACCESS_TOKEN` — the wrapper reads it from Chrome. Make a backup of my existing config first."*
->
-> Claude will read your existing `claude_desktop_config.json`, add the new server entry alongside any existing ones, back up the original, and tell you when to restart. Skip to step 3 (Restart Claude Desktop) and step 4 (Sanity check) below. The rest of this section is the manual route for everyone else.
+### Fastest path — have Claude do it for you
 
-### 1. Open your Claude Desktop config
+If Claude Desktop already has filesystem access to your home directory (Cowork mode users do by default), you don't need to touch JSON at all. Just paste the following prompt into a fresh Claude chat — edit the org name and URL to taste:
 
-On macOS the file lives at:
+```
+Add a Salesforce MCP entry to my Claude Desktop config named
+`salesforce-mydevorg` for the org at
+`https://yourdomain.my.salesforce.com`, using the wrapper at
+`github.com/kugamon/salesforce-mcp-auto-auth-chrome`. Don't set a
+SALESFORCE_ACCESS_TOKEN — the wrapper reads it from Chrome. Make a
+backup of my existing config first.
+```
+
+Claude reads your existing `claude_desktop_config.json`, adds the new server entry alongside any existing ones, backs up the original, and tells you when to restart. When Claude confirms it's done, skip to **Restart Claude Desktop** below.
+
+### Alternate route — edit `claude_desktop_config.json` yourself
+
+If you'd rather edit JSON by hand:
+
+**1. Open your Claude Desktop config.** On macOS the file lives at:
 
 ```
 ~/Library/Application Support/Claude/claude_desktop_config.json
 ```
 
-### 2. Add one entry per Salesforce org
+**2. Add one entry per Salesforce org.**
 
 ```jsonc
 {
@@ -72,11 +83,11 @@ Replace `yourdomain.my.salesforce.com` with your actual My Domain (the URL host 
 
 To add multiple orgs, repeat the block under a different key — `salesforce-prod`, `salesforce-sandbox`, `salesforce-dev1`, etc. Each gets its own `SALESFORCE_INSTANCE_URL`. See [`examples/claude_desktop_config.example.json`](examples/claude_desktop_config.example.json) for a complete template.
 
-### 3. Restart Claude Desktop
+### Restart Claude Desktop
 
 Cmd+Q (a full quit — not just closing the window) and reopen. Claude Desktop reads the config at startup.
 
-### 4. Sanity check
+### Sanity check
 
 In a new Claude conversation, ask: *"using salesforce-mydevorg, what's the org name?"* — Claude will call the `run_soql_query` tool with `SELECT Name FROM Organization`. If it returns your org's name, the wiring is correct.
 
