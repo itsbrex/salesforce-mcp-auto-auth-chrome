@@ -1,0 +1,53 @@
+name: Publish to PyPI
+
+# Triggers on pushing a version tag like v0.1.0. We don't publish on every
+# commit to main — only when a tag deliberately marks a release.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-publish:
+    name: Build and publish to PyPI
+    runs-on: ubuntu-latest
+
+    # Required for PyPI Trusted Publishing (OIDC). No API token needed —
+    # PyPI verifies the publish request came from this exact repo + workflow.
+    permissions:
+      id-token: write
+
+    # Tie this job to a GitHub Environment named "pypi". PyPI's Trusted
+    # Publisher config references this environment for an extra layer of
+    # scoping. (You set this up in PyPI once; see the README.)
+    environment:
+      name: pypi
+      url: https://pypi.org/project/salesforce-mcp-auto-auth-chrome/
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Verify built artifacts
+        run: |
+          echo "--- dist/ ---"
+          ls -la dist/
+          echo
+          echo "--- Wheel metadata ---"
+          python3 -m zipfile -l dist/*.whl
+
+      - name: Publish to PyPI
+        # The official PyPA action — supports Trusted Publishing out of the box.
+        # No `password` or `username` is set: it authenticates via the OIDC
+        # token GitHub Actions issues for this job.
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Skip the upload if this version is somehow already on PyPI
+          # (defensive — shouldn't happen because we tag deliberately).
+          skip-existing: true
