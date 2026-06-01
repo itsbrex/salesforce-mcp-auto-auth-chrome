@@ -34,6 +34,12 @@ The package is a thin Python shim around `mcp-salesforce-connector`. On every AP
 
 ## Setup — Part 1: Add to Claude Desktop (~1 min, one-time)
 
+> **Fastest path: have Claude do it for you.** If Claude Desktop already has filesystem access to your home directory (Cowork mode users do by default), just paste the following prompt into a fresh Claude chat:
+>
+> *"Add a Salesforce MCP entry to my Claude Desktop config named `salesforce-mydevorg` for the org at `https://yourdomain.my.salesforce.com`, using the wrapper at `github.com/kugamon/salesforce-mcp-auto-auth-chrome`. Don't set a `SALESFORCE_ACCESS_TOKEN` — the wrapper reads it from Chrome. Make a backup of my existing config first."*
+>
+> Claude will read your existing `claude_desktop_config.json`, add the new server entry alongside any existing ones, back up the original, and tell you when to restart. Skip to step 3 (Restart Claude Desktop) and step 4 (Sanity check) below. The rest of this section is the manual route for everyone else.
+
 ### 1. Open your Claude Desktop config
 
 On macOS the file lives at:
@@ -246,21 +252,6 @@ Every API call. The `sid` from Chrome is read fresh each time — Salesforce ses
 **Cookie reads work in Chrome standalone but the MCP can't read them**: The MCP process needs permission to access Keychain. If you ever click "Don't Allow" on the Keychain prompt by accident, open Keychain Access → search for "Chrome Safe Storage" → right-click → "Get Info" → "Access Control" → add the `uv` executable, or just delete the entry and let Chrome recreate it.
 
 **Want to see what the wrapper is doing?**: Logs go to stderr, which Claude Desktop captures at `~/Library/Logs/Claude/mcp-server-<name>.log`. The wrapper prints `[salesforce-mcp-auto-auth-chrome v0.1.0] Ready for ...` at startup and `cookie read failed: ...` on individual failures.
-
----
-
-## Comparison with the standard `mcp-salesforce-connector`
-
-| | This wrapper | Standard `mcp-salesforce-connector` |
-| --- | --- | --- |
-| First-time setup | Add JSON entry + log into Chrome | Add JSON entry + paste session token (or set up OAuth connected app) |
-| Token renewal | Automatic, every API call | Manual (paste new token every ~2 hours) or OAuth refresh |
-| Works without Chrome | No (by design) | Yes — uses whatever you put in env vars |
-| Works with multiple orgs | Yes — one entry per org | Yes — one entry per org |
-| Production / automation use | Not recommended — depends on browser session | Recommended (OAuth flow) |
-| Code dependency | Wraps `mcp-salesforce-connector` (no fork) | Direct |
-
-Use this wrapper for daily dev work. Use the standard connector + OAuth for production automation.
 
 ---
 
