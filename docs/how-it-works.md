@@ -82,7 +82,7 @@ So `instance.py` normalizes any configured or discovered host to its My Domain f
 `SALESFORCE_INSTANCE_URL` is now optional. `cookies.resolve_session` picks the org:
 
 1. If a URL is configured, normalize it to My Domain and read its `sid` directly (trusted — no network probe).
-2. Otherwise (or if no sid was found for the configured org), `discover_orgs` scans every browser/profile for Salesforce `sid` cookies, maps each to its My Domain URL, and `validate.session_is_valid` probes each candidate with a single authenticated `GET /services/data/vNN/limits`. The first that returns 200 wins. My Domain-origin cookies are ranked ahead of Lightning-derived ones, and validation filters out the invalid Lightning sids.
+2. Otherwise (or if no sid was found for the configured org), `discover_orgs` scans every browser/profile for Salesforce `sid` cookies, maps each to its My Domain URL, and `validate.session_is_valid` probes each candidate with a single authenticated `GET /services/oauth2/userinfo` (chosen over `/limits`, which needs the API-Enabled/setup perm and 403s for ordinary users with otherwise-valid sessions). The first that returns 200 wins. My Domain-origin cookies are ranked ahead of Lightning-derived ones, and validation filters out the invalid Lightning sids.
 
 This is why the previous Cresa workaround needed a launcher shim — the packaged tool only read Chrome's nonexistent `Default` profile and never reconciled Lightning vs My Domain. Both problems are now handled natively: multi-profile scanning finds the right profile, and normalization + validation pick the REST-valid sid.
 
