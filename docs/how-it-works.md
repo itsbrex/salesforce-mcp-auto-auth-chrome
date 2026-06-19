@@ -4,13 +4,13 @@ This doc captures the architecture and the design decisions, including the thing
 
 ## The core insight
 
-When you log into Salesforce in Chrome, Chrome stores a cookie named `sid` on the My Domain (e.g. `acme.my.salesforce.com`). The value of that cookie:
+When you log into Salesforce in a browser, that browser stores a cookie named `sid` on the My Domain (e.g. `acme.my.salesforce.com`). The value of that cookie:
 
 - **Is the active session id** for your UI session
 - **Is also accepted as a Bearer token** by Salesforce's REST API (with rare org-level exceptions like IP-locked sessions)
-- **Refreshes automatically** every time you load a Salesforce page in Chrome — as long as you're actively using the org, the cookie stays alive
+- **Refreshes automatically** every time you load a Salesforce page in the browser — as long as you're actively using the org, the cookie stays alive
 
-So if we could just *borrow* that cookie value every time we want to make an API call, we'd never have to manually paste a token again.
+So if we could just *borrow* that cookie value every time we want to make an API call, we'd never have to manually paste a token again. The wrapper checks every supported browser and profile, so it works regardless of which one you logged in with.
 
 That's the whole package, in one sentence.
 
@@ -41,8 +41,10 @@ That's the whole package, in one sentence.
 │  └── monkey-patches simple_salesforce.Salesforce               │
 │      ._call_salesforce → reads fresh sid per call              │
 │                                                                │
-│  auth.py                                                       │
-│  └── chrome_cookies(instance_url) → sid                        │
+│  auth.py / cookies.py                                          │
+│  └── read_sid(instance_url) → sid                              │
+│      └── scans browsers.py registry × profiles, dispatches to  │
+│          chromium.py / firefox.py / safari.py readers          │
 └────────────────────────────────────────────────────────────────┘
                  │
                  │ delegates to
@@ -58,6 +60,18 @@ That's the whole package, in one sentence.
                  ▼
             Salesforce REST API
 ```
+
+## How cookies are read (multi-browser, multi-profile)
+
+The wrapper reads cookies **natively** instead of delegating to `pycookiecheat`. This gives full control over which browsers and profiles are searched. `browsers.py` holds a priority-ordered registry of supported browsers (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari) with their macOS data dirs and Keychain services. `discover_sources()` enumerates every profile in each (chromium `Default`/`Profile N`, each Firefox profile dir, Safari's single store). The orchestrator in `cookies.py` walks those sources in priority order and returns the **first** non-empty `sid` matching the instance host. Optional `SALESFORCE_BROWSERS` / `SALESFORCE_PROFILES` env vars restrict or reorder the search.
+
+Per-family reader details:
+
+- **Chromium** (`chromium.py`): cookies live in a SQLite DB; the DB is copied to a temp file first (to dodge write locks). Encrypted values use the `v10` prefix and are decrypted with a key derived via `PBKDF2-HMAC-SHA1` (salt `saltysalt`, 1003 iterations, 16-byte key) from the per-browser "<Browser> Safe Storage" Keychain password (fetched via the `security` CLI), then AES-128-CBC with a 16-space IV. Newer Chromium prepends a 32-byte `SHA256(host_key)` to the plaintext — stripped only when it matches.
+- **Firefox** (`firefox.py`): cookies are stored unencrypted in `moz_cookies`; no Keychain or decryption needed.
+- **Safari** (`safari.py`): cookies live in a binary `Cookies.binarycookies` file, parsed directly. Reading requires Full Disk Access; without it Safari is skipped silently.
+
+Cookie host matching picks the longest `host_key` that is a suffix of the instance host, so an instance-specific `sid` wins over a broader-domain one.
 
 ## Why monkey-patch, why not fork
 

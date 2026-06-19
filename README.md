@@ -249,7 +249,7 @@ Every API call. The `sid` from Chrome is read fresh each time — Salesforce ses
 
 ## Troubleshooting
 
-**Claude shows "Server disconnected" at startup**: Almost always means the wrapper failed to import something — usually `pycookiecheat` or `mcp-salesforce-connector`. Look at `~/Library/Logs/Claude/mcp-server-<name>.log` for the actual Python traceback. Most fixes are a `uvx --reinstall` or running `uv sync` if you're working from a local clone.
+**Claude shows "Server disconnected" at startup**: Almost always means the wrapper failed to import something — usually `cryptography` or `mcp-salesforce-connector`. Look at `~/Library/Logs/Claude/mcp-server-<name>.log` for the actual Python traceback. Most fixes are a `uvx --reinstall` or running `uv sync` if you're working from a local clone.
 
 **`Not logged into Salesforce in Chrome for ...`** in chat: The wrapper couldn't find a `sid` cookie for the configured instance URL. Open that org in Chrome, sign in, then retry your Claude request. No Claude restart needed — the next tool call reads cookies fresh.
 
@@ -259,7 +259,14 @@ Every API call. The `sid` from Chrome is read fresh each time — Salesforce ses
 
 **`HTTP 401` from Salesforce on every call**: The `sid` cookie you have is valid for the UI session but the org may have "Lock sessions to the IP address from which they originated" enabled with a strict policy. If so, switch that org to OAuth-based auth via the standard `mcp-salesforce-connector` config.
 
-**Want to use Firefox/Safari/Brave/Arc instead of Chrome**: Not yet — today the wrapper only checks Chrome's cookie store. Adding other browsers is a small change to `auth.py` (pycookiecheat supports several). PRs welcome.
+**Want to use a browser other than Chrome**: Supported out of the box. The wrapper scans Chrome, Comet, Arc, Edge, Brave, Firefox, and Safari — and every profile in each — and uses the first org session it finds. No config needed.
+
+Restrict or reorder the search with optional env vars in your Claude Desktop config:
+
+- `SALESFORCE_BROWSERS` — comma-separated browser keys, in priority order. Keys: `chrome`, `comet`, `arc`, `edge`, `brave`, `firefox`, `safari`. Example: `"SALESFORCE_BROWSERS": "comet, chrome"`.
+- `SALESFORCE_PROFILES` — comma-separated profile names to limit to (e.g. `"Default, Profile 1"`). Applies across all selected browsers.
+
+**Safari note**: reading Safari cookies requires **Full Disk Access** for the app that launches the MCP server (Claude Desktop or your terminal). Grant it in System Settings → Privacy & Security → Full Disk Access. Without it, Safari is silently skipped and other browsers are still used.
 
 **Cookie reads work in Chrome standalone but the MCP can't read them**: The MCP process needs permission to access Keychain. If you ever click "Don't Allow" on the Keychain prompt by accident, open Keychain Access → search for "Chrome Safe Storage" → right-click → "Get Info" → "Access Control" → add the `uv` executable, or just delete the entry and let Chrome recreate it.
 
@@ -270,3 +277,4 @@ Every API call. The `sid` from Chrome is read fresh each time — Salesforce ses
 ## Version history
 
 - **v0.1.0** — initial release on PyPI. 14 tools (via mcp-salesforce-connector 0.1.15). Chrome-only, macOS-only, per-call `sid` refresh.
+- **Unreleased** — multi-browser, multi-profile `sid` lookup (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari). Native cookie decryption via `cryptography` (replaces `pycookiecheat`). New `SALESFORCE_BROWSERS` / `SALESFORCE_PROFILES` env vars. macOS-only.
