@@ -16,8 +16,17 @@ import tempfile
 from pathlib import Path
 
 from .browsers import CookieSource
+from .instance import is_salesforce_host
 
 log = logging.getLogger(__name__)
+
+
+def list_salesforce_sids(source: CookieSource) -> list[tuple[str, str]]:
+    """Return all ``(host, sid)`` Salesforce session cookies in this store."""
+    rows = _query_cookies(source.path, "sid")
+    if not rows:
+        return []
+    return [(h, v) for (h, v) in rows if v and is_salesforce_host(h)]
 
 
 def read_firefox_cookie(source: CookieSource, host: str, name: str) -> str | None:

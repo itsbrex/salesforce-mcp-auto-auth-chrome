@@ -20,8 +20,26 @@ import logging
 import struct
 
 from .browsers import CookieSource
+from .instance import is_salesforce_host
 
 log = logging.getLogger(__name__)
+
+
+def list_salesforce_sids(source: CookieSource) -> list[tuple[str, str]]:
+    """Return all ``(host, sid)`` Salesforce session cookies in this store."""
+    try:
+        data = source.path.read_bytes()
+    except (FileNotFoundError, PermissionError):
+        return []
+    try:
+        cookies = parse_binarycookies(data)
+    except Exception:  # noqa: BLE001
+        return []
+    return [
+        (host, value)
+        for (host, name, value) in cookies
+        if name == "sid" and value and is_salesforce_host(host)
+    ]
 
 
 def read_safari_cookie(source: CookieSource, host: str, name: str) -> str | None:

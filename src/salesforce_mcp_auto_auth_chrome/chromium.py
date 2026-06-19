@@ -24,6 +24,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from .browsers import CookieSource
+from .instance import is_salesforce_host
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +66,56 @@ def read_chromium_cookie(source: CookieSource, host: str, name: str) -> str | No
             e,
         )
         return None
+
+
+def list_salesforce_sids(source: CookieSource) -> list[tuple[str, str]]:
+    """Return all ``(host_key, sid)`` Salesforce session cookies in this store.
+
+    Used for auto-discovery when no instance URL is known. Decrypts each
+    encrypted Salesforce ``sid`` once (Keychain password fetched at most once).
+    """
+    rows = _query_cookies(source.path, "sid")
+    if not rows:
+        return []
+    out: list[tuple[str, str]] = []
+    key: bytes | None = None
+    password_tried = False
+    for host_key, value, encrypted in rows:
+        if not is_salesforce_host(host_key):
+            continue
+        if value:
+            out.append((host_key, value))
+            continue
+        if not encrypted:
+            continue
+        if key is None:
+            if password_tried:
+                continue
+            password_tried = True
+            password = _keychain_password(
+                source.keychain_service, source.keychain_account
+            )
+            if not password:
+                log.warning(
+                    "no Keychain password for %s; skipping encrypted sids",
+                    source.browser,
+                )
+                continue
+            key = _derive_key(password)
+        try:
+            sid = _decrypt(bytes(encrypted), key, host_key)
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "decrypt failed for %s/%s: %s: %s",
+                source.browser,
+                source.profile,
+                type(e).__name__,
+                e,
+            )
+            continue
+        if sid:
+            out.append((host_key, sid))
+    return out
 
 
 def _query_cookies(db_path: Path, name: str) -> list[tuple[str, str, bytes]] | None:

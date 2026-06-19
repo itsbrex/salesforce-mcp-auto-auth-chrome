@@ -12,14 +12,28 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from . import chromium, firefox, safari
 from .browsers import CookieSource, discover_sources
 from .chromium import read_chromium_cookie
 from .firefox import read_firefox_cookie
+from .instance import normalize_instance_url
 from .safari import read_safari_cookie
+from .validate import session_is_valid
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class OrgCandidate:
+    """A discovered Salesforce session: a My Domain REST URL + its sid."""
+
+    instance_url: str
+    sid: str
+    browser: str
+    profile: str
 
 
 def read_sid(
@@ -70,6 +84,95 @@ def _read_from_source(source: CookieSource, host: str) -> str | None:
     if source.family == "safari":
         return read_safari_cookie(source, host, "sid")
     return None
+
+
+def _list_sids_from_source(source: CookieSource) -> list[tuple[str, str]]:
+    if source.family == "chromium":
+        return chromium.list_salesforce_sids(source)
+    if source.family == "firefox":
+        return firefox.list_salesforce_sids(source)
+    if source.family == "safari":
+        return safari.list_salesforce_sids(source)
+    return []
+
+
+def discover_orgs(
+    browsers: list[str] | None = None,
+    profiles: list[str] | None = None,
+) -> list[OrgCandidate]:
+    """Scan all cookie sources for logged-in Salesforce orgs.
+
+    Each Salesforce ``sid`` cookie is mapped to its My Domain REST URL. Returns
+    deduped candidates in priority order, with sids whose cookie was already set
+    on a ``my.salesforce.com`` host ranked ahead of Lightning-derived ones (the
+    latter carry a different sid that the REST API rejects).
+    """
+    primary: list[OrgCandidate] = []
+    derived: list[OrgCandidate] = []
+    seen: set[tuple[str, str]] = set()
+    for source in discover_sources(browsers, profiles):
+        try:
+            pairs = _list_sids_from_source(source)
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "listing sids failed for %s/%s: %s: %s",
+                source.browser,
+                source.profile,
+                type(e).__name__,
+                e,
+            )
+            continue
+        for host_key, sid in pairs:
+            instance_url = normalize_instance_url(host_key)
+            if not instance_url:
+                continue
+            host = instance_url[len("https://") :]
+            if not host.endswith("salesforce.com"):
+                continue  # Lightning/VF hosts that didn't map to a My Domain
+            key = (instance_url, sid)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidate = OrgCandidate(instance_url, sid, source.browser, source.profile)
+            bare = host_key.lstrip(".").lower()
+            (primary if bare.endswith("salesforce.com") else derived).append(candidate)
+    return primary + derived
+
+
+def resolve_session(
+    configured_url: str | None,
+    browsers: list[str] | None = None,
+    profiles: list[str] | None = None,
+) -> tuple[str | None, str | None]:
+    """Resolve the org to bind to and an initial ``sid``.
+
+    Returns ``(instance_url, sid)`` where ``instance_url`` is the My Domain REST
+    URL. Strategy:
+
+    1. If ``configured_url`` is set, normalize it to My Domain and try to read a
+       ``sid`` for it directly (trusted — no network probe).
+    2. Otherwise (or if step 1 found no sid), auto-discover orgs from cookies and
+       return the first whose sid validates against the REST API.
+    3. If nothing validates, return the normalized configured URL (if any) with
+       ``None`` sid so the error surfaces at tool-call time.
+    """
+    normalized = normalize_instance_url(configured_url) if configured_url else None
+    if normalized:
+        sid = read_sid(normalized, browsers, profiles)
+        if sid:
+            return normalized, sid
+
+    for candidate in discover_orgs(browsers, profiles):
+        if session_is_valid(candidate.instance_url, candidate.sid):
+            log.info(
+                "auto-discovered org %s via %s/%s",
+                candidate.instance_url,
+                candidate.browser,
+                candidate.profile,
+            )
+            return candidate.instance_url, candidate.sid
+
+    return normalized, None
 
 
 def parse_env(
