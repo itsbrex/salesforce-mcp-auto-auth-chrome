@@ -31,7 +31,7 @@ def test_valid_session_returns_true(monkeypatch):
     monkeypatch.setattr(validate, "urlopen", fake_urlopen)
 
     assert session_is_valid("https://cresa.my.salesforce.com", "THE_SID") is True
-    assert captured["url"].startswith("https://cresa.my.salesforce.com/services/data/")
+    assert captured["url"] == "https://cresa.my.salesforce.com/services/oauth2/userinfo"
     assert captured["auth"] == "Bearer THE_SID"
 
 

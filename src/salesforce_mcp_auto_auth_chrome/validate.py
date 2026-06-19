@@ -5,8 +5,13 @@
 
 Used during auto-discovery to pick, among several candidate sessions found in
 the browser cookie stores, one that is actually live. A single authenticated
-GET to ``/services/data/vNN/limits`` returns 200 for a valid session and 401
+GET to ``/services/oauth2/userinfo`` returns 200 for a valid session and a 4xx
 for an expired/wrong one (e.g. a Lightning sid used against the My Domain host).
+
+``/services/oauth2/userinfo`` is chosen over ``/services/data/.../limits``
+because it only requires a valid OAuth token — not the "API Enabled" / setup
+permissions that ``limits`` needs, which would 403 for ordinary users even when
+their session is perfectly valid for SOQL.
 """
 
 from __future__ import annotations
@@ -16,8 +21,6 @@ from urllib.request import Request, urlopen
 
 log = logging.getLogger(__name__)
 
-_API_VERSION = "62.0"
-
 
 def session_is_valid(instance_url: str, sid: str, timeout: float = 8.0) -> bool:
     """Return True if `sid` authorizes REST calls against `instance_url`.
@@ -25,7 +28,7 @@ def session_is_valid(instance_url: str, sid: str, timeout: float = 8.0) -> bool:
     Any non-200 response, HTTP error, or network failure yields ``False`` —
     a session we cannot positively confirm is treated as unusable.
     """
-    url = f"{instance_url}/services/data/v{_API_VERSION}/limits"
+    url = f"{instance_url}/services/oauth2/userinfo"
     req = Request(url, headers={"Authorization": f"Bearer {sid}"})
     try:
         with urlopen(req, timeout=timeout) as resp:
