@@ -6,7 +6,7 @@ import os
 import sys
 
 from . import __version__
-from .auth import read_sid
+from .cookies import parse_env, resolve_session
 from .patch import install as install_patch
 
 
@@ -20,28 +20,37 @@ _OAUTH_ENV_VARS = (
 def main() -> int:
     """Run the MCP server with auto-auth from Chrome cookies.
 
-    Reads `SALESFORCE_INSTANCE_URL` from env, installs the per-call sid refresh
-    patch, then calls `mcp-salesforce-connector`'s entry point. Always exits
-    with the connector's exit code (or 1 on misconfiguration).
+    Reads the optional `SALESFORCE_INSTANCE_URL` from env (a Lightning or My
+    Domain URL — it's normalized to the My Domain REST host), or auto-discovers a
+    logged-in org from the browser cookie stores. Installs the per-call sid
+    refresh patch, then calls `mcp-salesforce-connector`'s entry point. Always
+    exits with the connector's exit code (or 1 on misconfiguration).
     """
-    instance_url = os.environ.get("SALESFORCE_INSTANCE_URL")
+    configured_url = os.environ.get("SALESFORCE_INSTANCE_URL")
+
+    # Resolve which browsers/profiles to search (env overrides; defaults = all).
+    browsers, profiles = parse_env(os.environ)
+
+    # Resolve the org: normalize a configured Lightning/My Domain URL, or
+    # auto-discover a logged-in org whose sid validates against the REST API.
+    instance_url, initial_sid = resolve_session(configured_url, browsers, profiles)
     if not instance_url:
         print(
-            "[salesforce-mcp-auto-auth-chrome] ERROR: SALESFORCE_INSTANCE_URL is not set. "
-            "The Claude Desktop config entry for this MCP server must provide it.",
+            "[salesforce-mcp-auto-auth-chrome] ERROR: no Salesforce org configured "
+            "via SALESFORCE_INSTANCE_URL and none could be auto-detected from your "
+            "browsers. Log into a Salesforce org in a supported browser, or set "
+            "SALESFORCE_INSTANCE_URL.",
             file=sys.stderr,
         )
         return 1
 
-    # Resolve which browsers/profiles to search (env overrides; defaults = all).
-    from .cookies import parse_env
-
-    browsers, profiles = parse_env(os.environ)
+    # The connector reads SALESFORCE_INSTANCE_URL for its REST base; pin it to the
+    # normalized My Domain host so Lightning URLs and auto-discovery work.
+    os.environ["SALESFORCE_INSTANCE_URL"] = instance_url
 
     # Seed env so mcp-salesforce-connector initializes happily even if no
     # browser currently has a sid. The per-call patch (installed below) ensures
     # the right token is used for every actual API request.
-    initial_sid = read_sid(instance_url, browsers, profiles)
     os.environ["SALESFORCE_ACCESS_TOKEN"] = initial_sid or "PENDING_CHROME_LOGIN"
 
     # Clear OAuth env vars so the connector takes the session_id path. If a
