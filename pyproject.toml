@@ -33,7 +33,7 @@ classifiers = [
 requires-python = ">=3.12"
 dependencies = [
     "mcp-salesforce-connector>=0.1.15",
-    "pycookiecheat>=0.7",
+    "cryptography>=42",
     "simple-salesforce>=1.12",
 ]
 
@@ -47,3 +47,12 @@ salesforce-mcp-auto-auth-chrome = "salesforce_mcp_auto_auth_chrome.__main__:main
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/salesforce_mcp_auto_auth_chrome"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
