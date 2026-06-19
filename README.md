@@ -281,4 +281,4 @@ Restrict or reorder the search with optional env vars in your Claude Desktop con
 ## Version history
 
 - **v0.1.0** — initial release on PyPI. 14 tools (via mcp-salesforce-connector 0.1.15). Chrome-only, macOS-only, per-call `sid` refresh.
-- **Unreleased** — multi-browser, multi-profile `sid` lookup (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari). Native cookie decryption via `cryptography` (replaces `pycookiecheat`). New `SALESFORCE_BROWSERS` / `SALESFORCE_PROFILES` env vars. Lightning→My Domain URL normalization; `SALESFORCE_INSTANCE_URL` now optional with REST-validated org auto-discovery. macOS-only.
+- **Unreleased** — multi-browser, multi-profile `sid` lookup (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari). Native cookie decryption via `cryptography` (replaces `pycookiecheat`). New `SALESFORCE_BROWSERS` / `SALESFORCE_PROFILES` env vars. Lightning→My Domain URL normalization; `SALESFORCE_INSTANCE_URL` now optional with REST-validated org auto-discovery. Per-call sid refresh pinned to the resolved profile, with 401/expired-session retry and an upstream-signature self-check. End-to-end smoke test at `scripts/smoke.py`. macOS-only.

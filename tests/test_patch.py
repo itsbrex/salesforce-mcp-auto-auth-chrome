@@ -79,3 +79,66 @@ def test_raises_when_no_sid_anywhere(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Not logged into Salesforce"):
         patched(_FakeSF(), "GET", "https://x")
+
+
+def test_warns_on_upstream_signature_change(monkeypatch, caplog):
+    def wrong_sig(self, totally, different):  # not (self, method, url, ...)
+        return None
+
+    monkeypatch.setattr(
+        simple_salesforce.Salesforce, "_call_salesforce", wrong_sig, raising=False
+    )
+    monkeypatch.setattr(patch, "read_sid", lambda u, b=None, p=None: "SID")
+
+    with caplog.at_level("WARNING"):
+        patch.install("https://cresa.my.salesforce.com")
+
+    assert any("signature changed" in r.message for r in caplog.records)
+
+
+def test_retries_once_on_expired_session(monkeypatch):
+    from simple_salesforce.exceptions import SalesforceExpiredSession
+
+    sids = iter(["SID1", "SID2"])
+    monkeypatch.setattr(patch, "read_sid", lambda u, b=None, p=None: next(sids))
+
+    state = {"n": 0}
+
+    def orig(self, method, url, name="", retries=0, max_retries=3, **kw):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise SalesforceExpiredSession("u", 401, "Account", b"")
+        return "OK_AFTER_RETRY"
+
+    monkeypatch.setattr(
+        simple_salesforce.Salesforce, "_call_salesforce", orig, raising=False
+    )
+    patch.install("https://cresa.my.salesforce.com")
+    patched = simple_salesforce.Salesforce._call_salesforce
+
+    sf = _FakeSF()
+    result = patched(sf, "GET", "https://x")
+
+    assert result == "OK_AFTER_RETRY"
+    assert state["n"] == 2  # retried exactly once
+    assert sf.headers["Authorization"] == "Bearer SID2"
+
+
+def test_no_retry_when_sid_unchanged(monkeypatch):
+    import pytest
+
+    from simple_salesforce.exceptions import SalesforceExpiredSession
+
+    monkeypatch.setattr(patch, "read_sid", lambda u, b=None, p=None: "SAME")
+
+    def orig(self, method, url, name="", retries=0, max_retries=3, **kw):
+        raise SalesforceExpiredSession("u", 401, "Account", b"")
+
+    monkeypatch.setattr(
+        simple_salesforce.Salesforce, "_call_salesforce", orig, raising=False
+    )
+    patch.install("https://cresa.my.salesforce.com")
+    patched = simple_salesforce.Salesforce._call_salesforce
+
+    with pytest.raises(SalesforceExpiredSession):
+        patched(_FakeSF(), "GET", "https://x")

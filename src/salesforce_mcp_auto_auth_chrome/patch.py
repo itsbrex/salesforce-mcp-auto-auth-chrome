@@ -19,7 +19,16 @@ in the chat as a tool error, which is much nicer than a startup crash.
 
 from __future__ import annotations
 
+import inspect
+import logging
+
 from .auth import read_sid
+
+log = logging.getLogger(__name__)
+
+# The upstream method we patch. If simple_salesforce changes this signature,
+# our patch could pass arguments wrong — we self-check at install time.
+_EXPECTED_PARAMS = ("self", "method", "url", "name", "retries", "max_retries")
 
 
 def install(
@@ -50,6 +59,27 @@ def install(
     import simple_salesforce  # imported here so callers don't pay the cost unless they use this
 
     _orig_call = simple_salesforce.Salesforce._call_salesforce
+
+    # Self-check: warn loudly if the upstream signature drifted from what we
+    # build our call against, so an upstream bump can't silently break auth.
+    actual = tuple(inspect.signature(_orig_call).parameters)
+    if actual[: len(_EXPECTED_PARAMS)] != _EXPECTED_PARAMS:
+        log.warning(
+            "simple_salesforce.Salesforce._call_salesforce signature changed "
+            "(got %s, expected prefix %s) — the auto-auth patch may misbehave; "
+            "check for a simple-salesforce update.",
+            actual,
+            _EXPECTED_PARAMS,
+        )
+
+    # Token-expiry retry: on a 401 (INVALID_SESSION_ID), re-read the sid once
+    # and retry — covers a cookie that rotated between our read and the request.
+    try:
+        from simple_salesforce.exceptions import SalesforceExpiredSession
+
+        _expired_exc: tuple[type[BaseException], ...] = (SalesforceExpiredSession,)
+    except Exception:  # noqa: BLE001 — exception class moved/renamed upstream
+        _expired_exc = ()
 
     def _fresh_sid() -> str | None:
         if pin_browser:
@@ -82,14 +112,33 @@ def install(
         # because _call_salesforce starts with `self.headers.copy()`.
         self.session_id = sid
         self.headers["Authorization"] = "Bearer " + sid
-        return _orig_call(
-            self,
-            method,
-            url,
-            name=name,
-            retries=retries,
-            max_retries=max_retries,
-            **kwargs,
-        )
+        try:
+            return _orig_call(
+                self,
+                method,
+                url,
+                name=name,
+                retries=retries,
+                max_retries=max_retries,
+                **kwargs,
+            )
+        except _expired_exc:
+            # Session expired at request time. Re-read the cookie once — if the
+            # browser has since refreshed it, retry with the new value.
+            fresh = _fresh_sid()
+            if not fresh or fresh == sid:
+                raise
+            log.info("session expired mid-call; retrying with refreshed sid")
+            self.session_id = fresh
+            self.headers["Authorization"] = "Bearer " + fresh
+            return _orig_call(
+                self,
+                method,
+                url,
+                name=name,
+                retries=retries,
+                max_retries=max_retries,
+                **kwargs,
+            )
 
     simple_salesforce.Salesforce._call_salesforce = _patched_call_salesforce
