@@ -16,12 +16,17 @@ If no session is present in Chrome at call time, we raise a `RuntimeError`
 with a friendly message — this bubbles up through the connector and surfaces
 in the chat as a tool error, which is much nicer than a startup crash.
 """
+
 from __future__ import annotations
 
-from .auth import read_sid_from_chrome
+from .auth import read_sid
 
 
-def install(instance_url: str) -> None:
+def install(
+    instance_url: str,
+    browsers: list[str] | None = None,
+    profiles: list[str] | None = None,
+) -> None:
     """Install the per-call sid refresh patch.
 
     Call this exactly once, before importing/starting `mcp-salesforce-connector`.
@@ -29,7 +34,8 @@ def install(instance_url: str) -> None:
 
     Args:
         instance_url: The Salesforce My Domain URL this server is bound to.
-            Used to look up the right `sid` cookie in Chrome.
+        browsers: Optional lowercase browser keys to restrict/order the search.
+        profiles: Optional profile names to restrict the search.
     """
     import simple_salesforce  # imported here so callers don't pay the cost unless they use this
 
@@ -44,12 +50,12 @@ def install(instance_url: str) -> None:
         max_retries: int = 3,
         **kwargs,
     ):
-        sid = read_sid_from_chrome(instance_url)
+        sid = read_sid(instance_url, browsers, profiles)
         if not sid:
             raise RuntimeError(
-                f"Not logged into Salesforce in Chrome for {instance_url}. "
-                f"Open that org in Chrome, sign in, then retry. "
-                f"(No 'sid' cookie found.)"
+                f"Not logged into Salesforce in any supported browser for "
+                f"{instance_url}. Open that org in your browser, sign in, then "
+                f"retry. (No 'sid' cookie found.)"
             )
         # Refresh in place for this call — the connector sees the new headers
         # because _call_salesforce starts with `self.headers.copy()`.

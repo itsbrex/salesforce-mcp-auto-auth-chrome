@@ -1,11 +1,12 @@
 """Entry point — patch `simple_salesforce`, then hand off to mcp-salesforce-connector."""
+
 from __future__ import annotations
 
 import os
 import sys
 
 from . import __version__
-from .auth import read_sid_from_chrome
+from .auth import read_sid
 from .patch import install as install_patch
 
 
@@ -32,10 +33,15 @@ def main() -> int:
         )
         return 1
 
-    # Seed env so mcp-salesforce-connector initializes happily even if Chrome
-    # currently has no sid. The per-call patch (installed below) ensures the
-    # right token is used for every actual API request.
-    initial_sid = read_sid_from_chrome(instance_url)
+    # Resolve which browsers/profiles to search (env overrides; defaults = all).
+    from .cookies import parse_env
+
+    browsers, profiles = parse_env(os.environ)
+
+    # Seed env so mcp-salesforce-connector initializes happily even if no
+    # browser currently has a sid. The per-call patch (installed below) ensures
+    # the right token is used for every actual API request.
+    initial_sid = read_sid(instance_url, browsers, profiles)
     os.environ["SALESFORCE_ACCESS_TOKEN"] = initial_sid or "PENDING_CHROME_LOGIN"
 
     # Clear OAuth env vars so the connector takes the session_id path. If a
@@ -44,7 +50,7 @@ def main() -> int:
     for key in _OAUTH_ENV_VARS:
         os.environ.pop(key, None)
 
-    install_patch(instance_url)
+    install_patch(instance_url, browsers, profiles)
 
     print(
         f"[salesforce-mcp-auto-auth-chrome v{__version__}] Ready for {instance_url} "
@@ -57,6 +63,7 @@ def main() -> int:
     # `src/`-layout publish — see its pyproject.toml for the [project.scripts]
     # section).
     from src.salesforce import main as connector_main  # type: ignore[import-not-found]
+
     return connector_main()
 
 
