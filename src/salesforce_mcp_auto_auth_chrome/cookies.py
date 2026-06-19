@@ -36,6 +36,22 @@ class OrgCandidate:
     profile: str
 
 
+@dataclass(frozen=True)
+class ResolvedSession:
+    """The org bound at startup, plus the source to pin per-call refresh to.
+
+    ``browser``/``profile`` identify the exact cookie store the initial sid came
+    from, so the per-call refresh can keep reading from the *same* profile
+    instead of drifting to another profile that happens to hold a stale sid for
+    the same host.
+    """
+
+    instance_url: str | None
+    sid: str | None
+    browser: str | None = None
+    profile: str | None = None
+
+
 def read_sid(
     instance_url: str,
     browsers: list[str] | None = None,
@@ -51,6 +67,20 @@ def read_sid(
     Returns:
         The ``sid`` string from the highest-priority browser/profile that has a
         live session, or ``None`` if none do.
+    """
+    found = read_sid_with_source(instance_url, browsers, profiles)
+    return found[0] if found else None
+
+
+def read_sid_with_source(
+    instance_url: str,
+    browsers: list[str] | None = None,
+    profiles: list[str] | None = None,
+) -> tuple[str, str, str] | None:
+    """Like `read_sid` but also report where the sid came from.
+
+    Returns ``(sid, browser, profile)`` for the highest-priority source with a
+    matching session, or ``None``.
     """
     host = urlparse(instance_url).hostname
     if not host:
@@ -71,7 +101,7 @@ def read_sid(
             continue
         if sid:
             log.info("found sid in %s/%s for %s", source.browser, source.profile, host)
-            return sid
+            return sid, source.browser, source.profile
     log.info("no sid found in any browser/profile for %s", host)
     return None
 
@@ -143,24 +173,25 @@ def resolve_session(
     configured_url: str | None,
     browsers: list[str] | None = None,
     profiles: list[str] | None = None,
-) -> tuple[str | None, str | None]:
-    """Resolve the org to bind to and an initial ``sid``.
+) -> ResolvedSession:
+    """Resolve the org to bind to, an initial ``sid``, and the source to pin.
 
-    Returns ``(instance_url, sid)`` where ``instance_url`` is the My Domain REST
-    URL. Strategy:
+    Strategy:
 
     1. If ``configured_url`` is set, normalize it to My Domain and try to read a
-       ``sid`` for it directly (trusted — no network probe).
+       ``sid`` for it directly (trusted — no network probe), recording which
+       browser/profile it came from.
     2. Otherwise (or if step 1 found no sid), auto-discover orgs from cookies and
        return the first whose sid validates against the REST API.
     3. If nothing validates, return the normalized configured URL (if any) with
-       ``None`` sid so the error surfaces at tool-call time.
+       a ``None`` sid so the error surfaces at tool-call time.
     """
     normalized = normalize_instance_url(configured_url) if configured_url else None
     if normalized:
-        sid = read_sid(normalized, browsers, profiles)
-        if sid:
-            return normalized, sid
+        found = read_sid_with_source(normalized, browsers, profiles)
+        if found:
+            sid, browser, profile = found
+            return ResolvedSession(normalized, sid, browser, profile)
 
     for candidate in discover_orgs(browsers, profiles):
         if session_is_valid(candidate.instance_url, candidate.sid):
@@ -170,9 +201,14 @@ def resolve_session(
                 candidate.browser,
                 candidate.profile,
             )
-            return candidate.instance_url, candidate.sid
+            return ResolvedSession(
+                candidate.instance_url,
+                candidate.sid,
+                candidate.browser,
+                candidate.profile,
+            )
 
-    return normalized, None
+    return ResolvedSession(normalized, None, None, None)
 
 
 def parse_env(

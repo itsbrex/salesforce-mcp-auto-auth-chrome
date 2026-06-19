@@ -76,46 +76,56 @@ def test_discover_orgs_dedupes(monkeypatch):
 # --- resolve_session ---------------------------------------------------------
 
 
-def test_resolve_configured_normalizes_and_trusts(monkeypatch):
+def test_resolve_configured_normalizes_and_pins_source(monkeypatch):
     monkeypatch.setattr(
         cookies,
-        "read_sid",
-        lambda u, b, p: "SID" if u == "https://cresa.my.salesforce.com" else None,
+        "read_sid_with_source",
+        lambda u, b, p: (
+            ("SID", "comet", "Profile 1")
+            if u == "https://cresa.my.salesforce.com"
+            else None
+        ),
     )
 
-    url, sid = cookies.resolve_session("https://cresa.lightning.force.com")
+    r = cookies.resolve_session("https://cresa.lightning.force.com")
 
-    assert (url, sid) == ("https://cresa.my.salesforce.com", "SID")
+    assert r.instance_url == "https://cresa.my.salesforce.com"
+    assert r.sid == "SID"
+    assert (r.browser, r.profile) == ("comet", "Profile 1")
 
 
-def test_resolve_autodiscovers_first_valid(monkeypatch):
-    monkeypatch.setattr(cookies, "read_sid", lambda u, b, p: None)
+def test_resolve_autodiscovers_first_valid_with_source(monkeypatch):
+    monkeypatch.setattr(cookies, "read_sid_with_source", lambda u, b, p: None)
     cands = [
         cookies.OrgCandidate(
-            "https://cresa.my.salesforce.com", "LIGHTNING", "chrome", "Default"
+            "https://cresa.my.salesforce.com", "LIGHTNING", "chrome", "Profile 6"
         ),
         cookies.OrgCandidate(
-            "https://cresa.my.salesforce.com", "GOOD", "chrome", "Default"
+            "https://cresa.my.salesforce.com", "GOOD", "chrome", "Profile 4"
         ),
     ]
     monkeypatch.setattr(cookies, "discover_orgs", lambda b, p: cands)
     monkeypatch.setattr(cookies, "session_is_valid", lambda u, s: s == "GOOD")
 
-    assert cookies.resolve_session(None) == ("https://cresa.my.salesforce.com", "GOOD")
+    r = cookies.resolve_session(None)
+
+    assert (r.instance_url, r.sid) == ("https://cresa.my.salesforce.com", "GOOD")
+    assert (r.browser, r.profile) == ("chrome", "Profile 4")
 
 
-def test_resolve_returns_none_when_nothing_found(monkeypatch):
-    monkeypatch.setattr(cookies, "read_sid", lambda u, b, p: None)
+def test_resolve_returns_empty_when_nothing_found(monkeypatch):
+    monkeypatch.setattr(cookies, "read_sid_with_source", lambda u, b, p: None)
     monkeypatch.setattr(cookies, "discover_orgs", lambda b, p: [])
 
-    assert cookies.resolve_session(None) == (None, None)
+    r = cookies.resolve_session(None)
+    assert (r.instance_url, r.sid) == (None, None)
 
 
 def test_resolve_defers_error_for_configured_without_session(monkeypatch):
-    monkeypatch.setattr(cookies, "read_sid", lambda u, b, p: None)
+    monkeypatch.setattr(cookies, "read_sid_with_source", lambda u, b, p: None)
     monkeypatch.setattr(cookies, "discover_orgs", lambda b, p: [])
 
-    url, sid = cookies.resolve_session("https://cresa.lightning.force.com")
+    r = cookies.resolve_session("https://cresa.lightning.force.com")
 
-    assert url == "https://cresa.my.salesforce.com"
-    assert sid is None
+    assert r.instance_url == "https://cresa.my.salesforce.com"
+    assert r.sid is None

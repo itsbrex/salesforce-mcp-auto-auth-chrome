@@ -33,7 +33,9 @@ def main() -> int:
 
     # Resolve the org: normalize a configured Lightning/My Domain URL, or
     # auto-discover a logged-in org whose sid validates against the REST API.
-    instance_url, initial_sid = resolve_session(configured_url, browsers, profiles)
+    resolved = resolve_session(configured_url, browsers, profiles)
+    instance_url = resolved.instance_url
+    initial_sid = resolved.sid
     if not instance_url:
         print(
             "[salesforce-mcp-auto-auth-chrome] ERROR: no Salesforce org configured "
@@ -59,11 +61,21 @@ def main() -> int:
     for key in _OAUTH_ENV_VARS:
         os.environ.pop(key, None)
 
-    install_patch(instance_url, browsers, profiles)
+    install_patch(
+        instance_url,
+        pin_browser=resolved.browser,
+        pin_profile=resolved.profile,
+        browsers=browsers,
+        profiles=profiles,
+    )
 
+    pinned = (
+        f"{resolved.browser}/{resolved.profile}" if resolved.browser else "any profile"
+    )
     print(
         f"[salesforce-mcp-auto-auth-chrome v{__version__}] Ready for {instance_url} "
-        f"(initial sid: {'present' if initial_sid else 'absent — will check Chrome per call'})",
+        f"(initial sid: {'present' if initial_sid else 'absent — will check per call'}; "
+        f"pinned to {pinned})",
         file=sys.stderr,
     )
 

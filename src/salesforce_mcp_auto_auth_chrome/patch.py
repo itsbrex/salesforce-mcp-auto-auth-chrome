@@ -24,6 +24,8 @@ from .auth import read_sid
 
 def install(
     instance_url: str,
+    pin_browser: str | None = None,
+    pin_profile: str | None = None,
     browsers: list[str] | None = None,
     profiles: list[str] | None = None,
 ) -> None:
@@ -32,14 +34,33 @@ def install(
     Call this exactly once, before importing/starting `mcp-salesforce-connector`.
     The patch persists for the lifetime of the process.
 
+    Per call it reads a fresh sid: first from the pinned browser/profile (the one
+    that won startup resolution), then — if that profile no longer has a session
+    — falling back to the user-configured browser/profile set. Pinning keeps the
+    token source stable so calls don't drift to another profile holding a stale
+    sid for the same host.
+
     Args:
         instance_url: The Salesforce My Domain URL this server is bound to.
-        browsers: Optional lowercase browser keys to restrict/order the search.
-        profiles: Optional profile names to restrict the search.
+        pin_browser: Browser key of the resolved source to prefer per-call.
+        pin_profile: Profile name of the resolved source to prefer per-call.
+        browsers: User-configured browser keys (fallback search scope).
+        profiles: User-configured profile names (fallback search scope).
     """
     import simple_salesforce  # imported here so callers don't pay the cost unless they use this
 
     _orig_call = simple_salesforce.Salesforce._call_salesforce
+
+    def _fresh_sid() -> str | None:
+        if pin_browser:
+            sid = read_sid(
+                instance_url,
+                [pin_browser],
+                [pin_profile] if pin_profile else None,
+            )
+            if sid:
+                return sid
+        return read_sid(instance_url, browsers, profiles)
 
     def _patched_call_salesforce(
         self,
@@ -50,7 +71,7 @@ def install(
         max_retries: int = 3,
         **kwargs,
     ):
-        sid = read_sid(instance_url, browsers, profiles)
+        sid = _fresh_sid()
         if not sid:
             raise RuntimeError(
                 f"Not logged into Salesforce in any supported browser for "
