@@ -73,6 +73,19 @@ Per-family reader details:
 
 Cookie host matching picks the longest `host_key` that is a suffix of the instance host, so an instance-specific `sid` wins over a broader-domain one.
 
+## Lightning normalization and org auto-discovery
+
+Salesforce serves its Lightning UI from `<org>.lightning.force.com`, but the REST API — and the session cookie that authorizes it — lives on the My Domain host `<org>.my.salesforce.com`. **The `sid` cookie set on the Lightning host is a different value that the REST API rejects with `INVALID_SESSION_ID`.** (We confirmed this empirically: the same org's Lightning and My Domain cookies hold distinct sids.)
+
+So `instance.py` normalizes any configured or discovered host to its My Domain form before either reading cookies or calling the API. `__main__.py` also pins `SALESFORCE_INSTANCE_URL` to that normalized host so the downstream connector talks to the right base URL.
+
+`SALESFORCE_INSTANCE_URL` is now optional. `cookies.resolve_session` picks the org:
+
+1. If a URL is configured, normalize it to My Domain and read its `sid` directly (trusted — no network probe).
+2. Otherwise (or if no sid was found for the configured org), `discover_orgs` scans every browser/profile for Salesforce `sid` cookies, maps each to its My Domain URL, and `validate.session_is_valid` probes each candidate with a single authenticated `GET /services/data/vNN/limits`. The first that returns 200 wins. My Domain-origin cookies are ranked ahead of Lightning-derived ones, and validation filters out the invalid Lightning sids.
+
+This is why the previous Cresa workaround needed a launcher shim — the packaged tool only read Chrome's nonexistent `Default` profile and never reconciled Lightning vs My Domain. Both problems are now handled natively: multi-profile scanning finds the right profile, and normalization + validation pick the REST-valid sid.
+
 ## Why monkey-patch, why not fork
 
 `mcp-salesforce-connector` is a pretty thin wrapper over `simple_salesforce` plus an MCP-protocol shell. Forking it to add cookie-based auth would mean:

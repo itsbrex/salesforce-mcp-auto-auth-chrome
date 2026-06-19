@@ -251,7 +251,11 @@ Every API call. The `sid` from Chrome is read fresh each time — Salesforce ses
 
 **Claude shows "Server disconnected" at startup**: Almost always means the wrapper failed to import something — usually `cryptography` or `mcp-salesforce-connector`. Look at `~/Library/Logs/Claude/mcp-server-<name>.log` for the actual Python traceback. Most fixes are a `uvx --reinstall` or running `uv sync` if you're working from a local clone.
 
-**`Not logged into Salesforce in Chrome for ...`** in chat: The wrapper couldn't find a `sid` cookie for the configured instance URL. Open that org in Chrome, sign in, then retry your Claude request. No Claude restart needed — the next tool call reads cookies fresh.
+**`Not logged into Salesforce in any supported browser for ...`** in chat: The wrapper couldn't find a `sid` cookie for the configured instance URL. Open that org in any supported browser, sign in, then retry your Claude request. No Claude restart needed — the next tool call reads cookies fresh.
+
+**`SALESFORCE_INSTANCE_URL` is optional**: If you omit it, the wrapper auto-discovers a logged-in org by scanning your browser cookies and validating each candidate `sid` against the REST API. Set it to pin a specific org. You can pass either a My Domain URL (`https://acme.my.salesforce.com`) **or** a Lightning URL (`https://acme.lightning.force.com`) — Lightning URLs are normalized to the My Domain host automatically.
+
+**`INVALID_SESSION_ID` on every call**: Usually means a Lightning-domain `sid` was used against the REST API — they're different cookies. The wrapper avoids this by always normalizing to the My Domain host and (during auto-discovery) validating sids before use, so make sure you're on a recent version.
 
 **Keychain prompt keeps appearing**: The first time the wrapper reads cookies, macOS asks permission to access "Chrome Safe Storage" via Keychain. Click **Always Allow** — not "Allow" — and the prompt won't return.
 
@@ -277,4 +281,4 @@ Restrict or reorder the search with optional env vars in your Claude Desktop con
 ## Version history
 
 - **v0.1.0** — initial release on PyPI. 14 tools (via mcp-salesforce-connector 0.1.15). Chrome-only, macOS-only, per-call `sid` refresh.
-- **Unreleased** — multi-browser, multi-profile `sid` lookup (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari). Native cookie decryption via `cryptography` (replaces `pycookiecheat`). New `SALESFORCE_BROWSERS` / `SALESFORCE_PROFILES` env vars. macOS-only.
+- **Unreleased** — multi-browser, multi-profile `sid` lookup (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari). Native cookie decryption via `cryptography` (replaces `pycookiecheat`). New `SALESFORCE_BROWSERS` / `SALESFORCE_PROFILES` env vars. Lightning→My Domain URL normalization; `SALESFORCE_INSTANCE_URL` now optional with REST-validated org auto-discovery. macOS-only.
