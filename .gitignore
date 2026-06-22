@@ -52,6 +52,3 @@ htmlcov/
 .envrc
 *.local
 claude_desktop_config.json
-
-# Local-only diagnostics / reference scripts (Cresa code-mode profile-mismatch fix)
-reference-local/
