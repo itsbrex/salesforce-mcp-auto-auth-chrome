@@ -11,35 +11,35 @@ from salesforce_mcp_auto_auth_chrome.instance import (
 
 
 def test_lightning_maps_to_my_domain():
-    assert normalize_host("cresa.lightning.force.com") == "cresa.my.salesforce.com"
+    assert normalize_host("acme.lightning.force.com") == "acme.my.salesforce.com"
 
 
 def test_sandbox_lightning_maps_to_my_domain():
     assert (
-        normalize_host("cresa--uat.sandbox.lightning.force.com")
-        == "cresa--uat.sandbox.my.salesforce.com"
+        normalize_host("acme--uat.sandbox.lightning.force.com")
+        == "acme--uat.sandbox.my.salesforce.com"
     )
 
 
 def test_my_domain_unchanged():
-    assert normalize_host("cresa.my.salesforce.com") == "cresa.my.salesforce.com"
+    assert normalize_host("acme.my.salesforce.com") == "acme.my.salesforce.com"
 
 
 def test_leading_dot_and_case_stripped():
-    assert normalize_host(".CRESA.Lightning.Force.Com") == "cresa.my.salesforce.com"
+    assert normalize_host(".ACME.Lightning.Force.Com") == "acme.my.salesforce.com"
 
 
 def test_normalize_instance_url_adds_scheme_and_maps():
     assert (
-        normalize_instance_url("cresa.lightning.force.com")
-        == "https://cresa.my.salesforce.com"
+        normalize_instance_url("acme.lightning.force.com")
+        == "https://acme.my.salesforce.com"
     )
 
 
 def test_normalize_instance_url_preserves_my_domain():
     assert (
-        normalize_instance_url("https://cresa.my.salesforce.com/lightning/o/Account")
-        == "https://cresa.my.salesforce.com"
+        normalize_instance_url("https://acme.my.salesforce.com/lightning/o/Account")
+        == "https://acme.my.salesforce.com"
     )
 
 
@@ -48,7 +48,7 @@ def test_normalize_instance_url_none_for_garbage():
 
 
 def test_is_salesforce_host():
-    assert is_salesforce_host("cresa.my.salesforce.com")
-    assert is_salesforce_host(".cresa.lightning.force.com")
+    assert is_salesforce_host("acme.my.salesforce.com")
+    assert is_salesforce_host(".acme.lightning.force.com")
     assert is_salesforce_host("na139.salesforce.com")
     assert not is_salesforce_host("example.com")

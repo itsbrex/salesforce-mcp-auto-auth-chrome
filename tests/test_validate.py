@@ -30,8 +30,8 @@ def test_valid_session_returns_true(monkeypatch):
 
     monkeypatch.setattr(validate, "urlopen", fake_urlopen)
 
-    assert session_is_valid("https://cresa.my.salesforce.com", "THE_SID") is True
-    assert captured["url"] == "https://cresa.my.salesforce.com/services/oauth2/userinfo"
+    assert session_is_valid("https://acme.my.salesforce.com", "THE_SID") is True
+    assert captured["url"] == "https://acme.my.salesforce.com/services/oauth2/userinfo"
     assert captured["auth"] == "Bearer THE_SID"
 
 
@@ -41,7 +41,7 @@ def test_http_401_returns_false(monkeypatch):
 
     monkeypatch.setattr(validate, "urlopen", fake_urlopen)
 
-    assert session_is_valid("https://cresa.my.salesforce.com", "BAD_SID") is False
+    assert session_is_valid("https://acme.my.salesforce.com", "BAD_SID") is False
 
 
 def test_network_error_returns_false(monkeypatch):
@@ -50,4 +50,4 @@ def test_network_error_returns_false(monkeypatch):
 
     monkeypatch.setattr(validate, "urlopen", fake_urlopen)
 
-    assert session_is_valid("https://cresa.my.salesforce.com", "SID") is False
+    assert session_is_valid("https://acme.my.salesforce.com", "SID") is False

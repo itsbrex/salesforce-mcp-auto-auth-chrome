@@ -28,7 +28,7 @@ def _install_capturing(monkeypatch, **kwargs):
     monkeypatch.setattr(
         simple_salesforce.Salesforce, "_call_salesforce", _orig, raising=False
     )
-    patch.install("https://cresa.my.salesforce.com", **kwargs)
+    patch.install("https://acme.my.salesforce.com", **kwargs)
     return simple_salesforce.Salesforce._call_salesforce, calls
 
 
@@ -91,7 +91,7 @@ def test_warns_on_upstream_signature_change(monkeypatch, caplog):
     monkeypatch.setattr(patch, "read_sid", lambda u, b=None, p=None: "SID")
 
     with caplog.at_level("WARNING"):
-        patch.install("https://cresa.my.salesforce.com")
+        patch.install("https://acme.my.salesforce.com")
 
     assert any("signature changed" in r.message for r in caplog.records)
 
@@ -113,7 +113,7 @@ def test_retries_once_on_expired_session(monkeypatch):
     monkeypatch.setattr(
         simple_salesforce.Salesforce, "_call_salesforce", orig, raising=False
     )
-    patch.install("https://cresa.my.salesforce.com")
+    patch.install("https://acme.my.salesforce.com")
     patched = simple_salesforce.Salesforce._call_salesforce
 
     sf = _FakeSF()
@@ -136,7 +136,7 @@ def test_no_retry_when_sid_unchanged(monkeypatch):
     monkeypatch.setattr(
         simple_salesforce.Salesforce, "_call_salesforce", orig, raising=False
     )
-    patch.install("https://cresa.my.salesforce.com")
+    patch.install("https://acme.my.salesforce.com")
     patched = simple_salesforce.Salesforce._call_salesforce
 
     with pytest.raises(SalesforceExpiredSession):

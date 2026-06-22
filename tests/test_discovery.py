@@ -24,9 +24,9 @@ def test_firefox_lists_only_salesforce_sids(tmp_path):
     con.executemany(
         "INSERT INTO moz_cookies (host, name, value) VALUES (?, ?, ?)",
         [
-            (".cresa.my.salesforce.com", "sid", "MYSID"),
+            (".acme.my.salesforce.com", "sid", "MYSID"),
             (".example.com", "sid", "NOPE"),
-            (".cresa.my.salesforce.com", "other", "x"),
+            (".acme.my.salesforce.com", "other", "x"),
         ],
     )
     con.commit()
@@ -36,7 +36,7 @@ def test_firefox_lists_only_salesforce_sids(tmp_path):
         CookieSource("firefox", "p", "firefox", db, None, None)
     )
 
-    assert result == [(".cresa.my.salesforce.com", "MYSID")]
+    assert result == [(".acme.my.salesforce.com", "MYSID")]
 
 
 # --- discover_orgs -----------------------------------------------------------
@@ -49,16 +49,16 @@ def test_discover_orgs_maps_lightning_and_ranks_my_domain_first(monkeypatch):
         cookies.chromium,
         "list_salesforce_sids",
         lambda s: [
-            (".cresa.lightning.force.com", "LIGHTNING_SID"),
-            (".cresa.my.salesforce.com", "MY_SID"),
+            (".acme.lightning.force.com", "LIGHTNING_SID"),
+            (".acme.my.salesforce.com", "MY_SID"),
         ],
     )
 
     orgs = cookies.discover_orgs()
 
     pairs = [(o.instance_url, o.sid) for o in orgs]
-    assert pairs[0] == ("https://cresa.my.salesforce.com", "MY_SID")  # primary first
-    assert ("https://cresa.my.salesforce.com", "LIGHTNING_SID") in pairs
+    assert pairs[0] == ("https://acme.my.salesforce.com", "MY_SID")  # primary first
+    assert ("https://acme.my.salesforce.com", "LIGHTNING_SID") in pairs
 
 
 def test_discover_orgs_dedupes(monkeypatch):
@@ -67,7 +67,7 @@ def test_discover_orgs_dedupes(monkeypatch):
     monkeypatch.setattr(
         cookies.chromium,
         "list_salesforce_sids",
-        lambda s: [(".cresa.my.salesforce.com", "SID")] * 3,
+        lambda s: [(".acme.my.salesforce.com", "SID")] * 3,
     )
 
     assert len(cookies.discover_orgs()) == 1
@@ -82,14 +82,14 @@ def test_resolve_configured_normalizes_and_pins_source(monkeypatch):
         "read_sid_with_source",
         lambda u, b, p: (
             ("SID", "comet", "Profile 1")
-            if u == "https://cresa.my.salesforce.com"
+            if u == "https://acme.my.salesforce.com"
             else None
         ),
     )
 
-    r = cookies.resolve_session("https://cresa.lightning.force.com")
+    r = cookies.resolve_session("https://acme.lightning.force.com")
 
-    assert r.instance_url == "https://cresa.my.salesforce.com"
+    assert r.instance_url == "https://acme.my.salesforce.com"
     assert r.sid == "SID"
     assert (r.browser, r.profile) == ("comet", "Profile 1")
 
@@ -98,10 +98,10 @@ def test_resolve_autodiscovers_first_valid_with_source(monkeypatch):
     monkeypatch.setattr(cookies, "read_sid_with_source", lambda u, b, p: None)
     cands = [
         cookies.OrgCandidate(
-            "https://cresa.my.salesforce.com", "LIGHTNING", "chrome", "Profile 6"
+            "https://acme.my.salesforce.com", "LIGHTNING", "chrome", "Profile 6"
         ),
         cookies.OrgCandidate(
-            "https://cresa.my.salesforce.com", "GOOD", "chrome", "Profile 4"
+            "https://acme.my.salesforce.com", "GOOD", "chrome", "Profile 4"
         ),
     ]
     monkeypatch.setattr(cookies, "discover_orgs", lambda b, p: cands)
@@ -109,7 +109,7 @@ def test_resolve_autodiscovers_first_valid_with_source(monkeypatch):
 
     r = cookies.resolve_session(None)
 
-    assert (r.instance_url, r.sid) == ("https://cresa.my.salesforce.com", "GOOD")
+    assert (r.instance_url, r.sid) == ("https://acme.my.salesforce.com", "GOOD")
     assert (r.browser, r.profile) == ("chrome", "Profile 4")
 
 
@@ -125,7 +125,7 @@ def test_resolve_defers_error_for_configured_without_session(monkeypatch):
     monkeypatch.setattr(cookies, "read_sid_with_source", lambda u, b, p: None)
     monkeypatch.setattr(cookies, "discover_orgs", lambda b, p: [])
 
-    r = cookies.resolve_session("https://cresa.lightning.force.com")
+    r = cookies.resolve_session("https://acme.lightning.force.com")
 
-    assert r.instance_url == "https://cresa.my.salesforce.com"
+    assert r.instance_url == "https://acme.my.salesforce.com"
     assert r.sid is None
