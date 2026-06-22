@@ -15,16 +15,14 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import shutil
-import sqlite3
 import subprocess
-import tempfile
 from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from .browsers import CookieSource
 from .instance import is_salesforce_host
+from .utils import best_host_match, query_sqlite_cookies
 
 log = logging.getLogger(__name__)
 
@@ -39,7 +37,9 @@ def read_chromium_cookie(source: CookieSource, host: str, name: str) -> str | No
     rows = _query_cookies(source.path, name)
     if rows is None:
         return None
-    match = _best_host_match(rows, host)
+    # Accept every suffix match (eligible defaults True): a Chromium row's value
+    # may live in the encrypted column, so we can't require a plaintext value.
+    match = best_host_match(rows, host, host_of=lambda r: r[0])
     if match is None:
         return None
     host_key, value, encrypted = match
@@ -119,42 +119,15 @@ def list_salesforce_sids(source: CookieSource) -> list[tuple[str, str]]:
 
 
 def _query_cookies(db_path: Path, name: str) -> list[tuple[str, str, bytes]] | None:
-    """Copy the (possibly locked) DB to a temp file and read matching rows."""
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_db = Path(tmp) / "Cookies"
-            shutil.copy2(db_path, tmp_db)
-            con = sqlite3.connect(f"file:{tmp_db}?mode=ro", uri=True)
-            try:
-                cur = con.execute(
-                    "SELECT host_key, value, encrypted_value FROM cookies "
-                    "WHERE name = ?",
-                    (name,),
-                )
-                return [(h, v or "", e or b"") for (h, v, e) in cur.fetchall()]
-            finally:
-                con.close()
-    except Exception as e:  # noqa: BLE001
-        log.warning(
-            "cookie DB read failed for %s: %s: %s", db_path, type(e).__name__, e
-        )
+    """Read ``(host_key, value, encrypted_value)`` rows for cookie ``name``."""
+    rows = query_sqlite_cookies(
+        db_path,
+        "SELECT host_key, value, encrypted_value FROM cookies WHERE name = ?",
+        (name,),
+    )
+    if rows is None:
         return None
-
-
-def _best_host_match(
-    rows: list[tuple[str, str, bytes]], host: str
-) -> tuple[str, str, bytes] | None:
-    """Pick the row whose host_key is the longest suffix-match of `host`."""
-    target = host.lower()
-    best: tuple[str, str, bytes] | None = None
-    best_len = -1
-    for host_key, value, encrypted in rows:
-        bare = host_key.lstrip(".").lower()
-        if target == bare or target.endswith("." + bare):
-            if len(bare) > best_len:
-                best = (host_key, value, encrypted)
-                best_len = len(bare)
-    return best
+    return [(h, v or "", e or b"") for (h, v, e) in rows]
 
 
 def _derive_key(password: str) -> bytes:

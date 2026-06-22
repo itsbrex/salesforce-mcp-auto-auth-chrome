@@ -21,6 +21,7 @@ import struct
 
 from .browsers import CookieSource
 from .instance import is_salesforce_host
+from .utils import best_host_match
 
 log = logging.getLogger(__name__)
 
@@ -55,18 +56,12 @@ def read_safari_cookie(source: CookieSource, host: str, name: str) -> str | None
         log.warning("Safari cookie parse failed: %s: %s", type(e).__name__, e)
         return None
 
-    target = host.lower()
-    best: str | None = None
-    best_len = -1
-    for cookie_host, cookie_name, value in cookies:
-        if cookie_name != name:
-            continue
-        bare = cookie_host.lstrip(".").lower()
-        if (target == bare or target.endswith("." + bare)) and value:
-            if len(bare) > best_len:
-                best = value
-                best_len = len(bare)
-    return best
+    # Require a non-empty value; binarycookies stores values in plaintext.
+    candidates = [(h, v) for (h, n, v) in cookies if n == name]
+    match = best_host_match(
+        candidates, host, host_of=lambda r: r[0], eligible=lambda r: bool(r[1])
+    )
+    return match[1] if match else None
 
 
 def parse_binarycookies(data: bytes) -> list[tuple[str, str, str]]:

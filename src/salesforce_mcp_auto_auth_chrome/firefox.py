@@ -10,13 +10,11 @@ columns ``host``, ``name``, ``value``), so no Keychain/decryption is needed.
 from __future__ import annotations
 
 import logging
-import shutil
-import sqlite3
-import tempfile
 from pathlib import Path
 
 from .browsers import CookieSource
 from .instance import is_salesforce_host
+from .utils import best_host_match, query_sqlite_cookies
 
 log = logging.getLogger(__name__)
 
@@ -34,34 +32,18 @@ def read_firefox_cookie(source: CookieSource, host: str, name: str) -> str | Non
     rows = _query_cookies(source.path, name)
     if rows is None:
         return None
-    target = host.lower()
-    best: str | None = None
-    best_len = -1
-    for cookie_host, value in rows:
-        bare = cookie_host.lstrip(".").lower()
-        if target == bare or target.endswith("." + bare):
-            if len(bare) > best_len and value:
-                best = value
-                best_len = len(bare)
-    return best
+    # Require a non-empty plaintext value — Firefox cookies are never encrypted.
+    match = best_host_match(
+        rows, host, host_of=lambda r: r[0], eligible=lambda r: bool(r[1])
+    )
+    return match[1] if match else None
 
 
 def _query_cookies(db_path: Path, name: str) -> list[tuple[str, str]] | None:
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_db = Path(tmp) / "cookies.sqlite"
-            shutil.copy2(db_path, tmp_db)
-            con = sqlite3.connect(f"file:{tmp_db}?mode=ro", uri=True)
-            try:
-                cur = con.execute(
-                    "SELECT host, value FROM moz_cookies WHERE name = ?",
-                    (name,),
-                )
-                return [(h, v or "") for (h, v) in cur.fetchall()]
-            finally:
-                con.close()
-    except Exception as e:  # noqa: BLE001
-        log.warning(
-            "Firefox cookie read failed for %s: %s: %s", db_path, type(e).__name__, e
-        )
+    """Read ``(host, value)`` rows for cookie ``name`` from ``moz_cookies``."""
+    rows = query_sqlite_cookies(
+        db_path, "SELECT host, value FROM moz_cookies WHERE name = ?", (name,)
+    )
+    if rows is None:
         return None
+    return [(h, v or "") for (h, v) in rows]
