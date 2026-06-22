@@ -26,6 +26,13 @@ from .auth import read_sid
 
 log = logging.getLogger(__name__)
 
+# Sentinel seeded into SALESFORCE_ACCESS_TOKEN by __main__ when no sid is
+# available at startup, so the connector can construct without a real token.
+# The per-call patch always overwrites the token with a freshly read sid (or
+# raises), so this value must never reach Salesforce — `_patched_call_salesforce`
+# rejects it defensively before any request goes out.
+PENDING_LOGIN_SENTINEL = "PENDING_CHROME_LOGIN"
+
 # The upstream method we patch. If simple_salesforce changes this signature,
 # our patch could pass arguments wrong — we self-check at install time.
 _EXPECTED_PARAMS = ("self", "method", "url", "name", "retries", "max_retries")
@@ -102,7 +109,7 @@ def install(
         **kwargs,
     ):
         sid = _fresh_sid()
-        if not sid:
+        if not sid or sid == PENDING_LOGIN_SENTINEL:
             raise RuntimeError(
                 f"Not logged into Salesforce in any supported browser for "
                 f"{instance_url}. Open that org in your browser, sign in, then "

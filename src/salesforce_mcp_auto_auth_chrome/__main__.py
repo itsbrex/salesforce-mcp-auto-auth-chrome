@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 
 from . import __version__
 from .cookies import parse_env, resolve_session
+from .patch import PENDING_LOGIN_SENTINEL
 from .patch import install as install_patch
+
+log = logging.getLogger(__name__)
 
 
 _OAUTH_ENV_VARS = (
@@ -26,6 +30,27 @@ def main() -> int:
     refresh patch, then calls `mcp-salesforce-connector`'s entry point. Always
     exits with the connector's exit code (or 1 on misconfiguration).
     """
+    # Logs go to stderr — stdout is the MCP stdio protocol channel and must stay
+    # clean. Other modules log via `logging`; configure the root logger here so
+    # their messages (and ours) actually surface.
+    logging.basicConfig(
+        stream=sys.stderr,
+        level=logging.INFO,
+        format="[salesforce-mcp-auto-auth-chrome] %(levelname)s: %(message)s",
+    )
+
+    # macOS-only: cookie stores live under ~/Library, decryption uses the macOS
+    # Keychain via the `security` CLI, and Safari cookies are a macOS binary
+    # format. Fail fast with a clear message instead of a confusing downstream
+    # traceback on Linux/Windows.
+    if sys.platform != "darwin":
+        log.error(
+            "this server is macOS-only (it reads browser cookies via the macOS "
+            "Keychain and ~/Library paths); detected platform %r.",
+            sys.platform,
+        )
+        return 1
+
     configured_url = os.environ.get("SALESFORCE_INSTANCE_URL")
 
     # Resolve which browsers/profiles to search (env overrides; defaults = all).
@@ -37,12 +62,10 @@ def main() -> int:
     instance_url = resolved.instance_url
     initial_sid = resolved.sid
     if not instance_url:
-        print(
-            "[salesforce-mcp-auto-auth-chrome] ERROR: no Salesforce org configured "
-            "via SALESFORCE_INSTANCE_URL and none could be auto-detected from your "
-            "browsers. Log into a Salesforce org in a supported browser, or set "
-            "SALESFORCE_INSTANCE_URL.",
-            file=sys.stderr,
+        log.error(
+            "no Salesforce org configured via SALESFORCE_INSTANCE_URL and none "
+            "could be auto-detected from your browsers. Log into a Salesforce org "
+            "in a supported browser, or set SALESFORCE_INSTANCE_URL."
         )
         return 1
 
@@ -52,8 +75,9 @@ def main() -> int:
 
     # Seed env so mcp-salesforce-connector initializes happily even if no
     # browser currently has a sid. The per-call patch (installed below) ensures
-    # the right token is used for every actual API request.
-    os.environ["SALESFORCE_ACCESS_TOKEN"] = initial_sid or "PENDING_CHROME_LOGIN"
+    # the right token is used for every actual API request — and it rejects this
+    # sentinel defensively, so it can never reach Salesforce as a bogus token.
+    os.environ["SALESFORCE_ACCESS_TOKEN"] = initial_sid or PENDING_LOGIN_SENTINEL
 
     # Clear OAuth env vars so the connector takes the session_id path. If a
     # user has those set from a previous config, leaving them in would make
@@ -72,18 +96,30 @@ def main() -> int:
     pinned = (
         f"{resolved.browser}/{resolved.profile}" if resolved.browser else "any profile"
     )
-    print(
-        f"[salesforce-mcp-auto-auth-chrome v{__version__}] Ready for {instance_url} "
-        f"(initial sid: {'present' if initial_sid else 'absent — will check per call'}; "
-        f"pinned to {pinned})",
-        file=sys.stderr,
+    log.info(
+        "v%s ready for %s (initial sid: %s; pinned to %s)",
+        __version__,
+        instance_url,
+        "present" if initial_sid else "absent — will check per call",
+        pinned,
     )
 
-    # Hand off to mcp-salesforce-connector's main. Its entry point is
-    # exposed as `src.salesforce:main` (an odd convention from that package's
-    # `src/`-layout publish — see its pyproject.toml for the [project.scripts]
-    # section).
-    from src.salesforce import main as connector_main  # type: ignore[import-not-found]
+    # Hand off to mcp-salesforce-connector's main. Its entry point is exposed as
+    # `src.salesforce:main` (an artifact of that package's `src/`-layout publish).
+    # Import defensively: a missing/renamed dependency should produce a clear,
+    # actionable message rather than an opaque ModuleNotFoundError for the bare
+    # top-level name `src`.
+    try:
+        from src.salesforce import main as connector_main  # type: ignore[import-not-found]
+    except ImportError as e:
+        log.error(
+            "could not import the bundled MCP Salesforce connector "
+            "(`from src.salesforce import main`): %s. Ensure "
+            "'mcp-salesforce-connector' is installed in this environment "
+            "(run `uv sync`).",
+            e,
+        )
+        return 1
 
     return connector_main()
 
