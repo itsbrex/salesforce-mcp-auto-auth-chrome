@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import inspect
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from .auth import read_sid
 
@@ -82,7 +84,7 @@ def _apply_sid(sf: object, sid: str) -> None:
     sf.headers["Authorization"] = "Bearer " + sid  # type: ignore[attr-defined]
 
 
-def _signature_ok(orig_call) -> bool:
+def _signature_ok(orig_call: Callable[..., Any]) -> bool:
     """Warn (and return False) if the upstream method signature drifted.
 
     A silent upstream rename/reorder of `_call_salesforce`'s parameters would
@@ -118,16 +120,16 @@ def _resolve_expired_exc() -> tuple[type[BaseException], ...]:
 
 def _patched_call(
     cfg: _PatchConfig,
-    orig_call,
+    orig_call: Callable[..., Any],
     expired_exc: tuple[type[BaseException], ...],
-    sf,
+    sf: Any,
     method: str,
     url: str,
     name: str,
     retries: int,
     max_retries: int,
-    kwargs: dict,
-):
+    kwargs: dict[str, Any],
+) -> Any:
     """Refresh the sid, delegate to the original call, retry once on expiry."""
     sid = _fresh_sid(cfg)
     if not sid or sid == PENDING_LOGIN_SENTINEL:
@@ -185,22 +187,22 @@ def install(
         browsers: User-configured browser keys (fallback search scope).
         profiles: User-configured profile names (fallback search scope).
     """
-    import simple_salesforce  # imported here so callers don't pay the cost unless they use this
+    import simple_salesforce  # local import keeps cost off the no-op path
 
     cfg = _PatchConfig(instance_url, pin_browser, pin_profile, browsers, profiles)
-    orig_call = simple_salesforce.Salesforce._call_salesforce
+    orig_call = simple_salesforce.Salesforce._call_salesforce  # type: ignore[attr-defined]
     _signature_ok(orig_call)
     expired_exc = _resolve_expired_exc()
 
     def _replacement(
-        self,
+        self: Any,
         method: str,
         url: str,
         name: str = "",
         retries: int = 0,
         max_retries: int = 3,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> Any:
         return _patched_call(
             cfg,
             orig_call,
@@ -214,4 +216,4 @@ def install(
             kwargs,
         )
 
-    simple_salesforce.Salesforce._call_salesforce = _replacement
+    simple_salesforce.Salesforce._call_salesforce = _replacement  # type: ignore[attr-defined,method-assign]

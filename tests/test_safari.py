@@ -6,7 +6,6 @@ from __future__ import annotations
 import struct
 from pathlib import Path
 
-from salesforce_mcp_auto_auth_chrome import safari
 from salesforce_mcp_auto_auth_chrome.browsers import CookieSource
 from salesforce_mcp_auto_auth_chrome.safari import (
     parse_binarycookies,

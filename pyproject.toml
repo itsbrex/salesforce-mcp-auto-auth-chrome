@@ -32,9 +32,13 @@ classifiers = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "mcp-salesforce-connector>=0.1.15",
-    "cryptography>=42",
-    "simple-salesforce>=1.12",
+    # Upper bounds guard against breaking upstream releases auto-installing.
+    # The two we couple to most tightly — the connector we wrap and the
+    # simple-salesforce whose private _call_salesforce we monkey-patch — are
+    # capped at the next major/minor so a breaking bump can't silently land.
+    "mcp-salesforce-connector>=0.1.15,<0.2",
+    "cryptography>=42,<47",
+    "simple-salesforce>=1.12,<2",
 ]
 
 [project.urls]
@@ -51,8 +55,30 @@ packages = ["src/salesforce_mcp_auto_auth_chrome"]
 [dependency-groups]
 dev = [
     "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.11",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "BLE", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+strict = true
+warn_unused_ignores = true
+
+# Third-party packages we depend on that ship no type information. The connector
+# is published under a top-level `src` namespace (see __main__), and we patch
+# simple_salesforce's internals — neither is typed, so don't fail on them.
+[[tool.mypy.overrides]]
+module = ["simple_salesforce.*", "src.*"]
+ignore_missing_imports = true

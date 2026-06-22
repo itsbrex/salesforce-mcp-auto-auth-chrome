@@ -21,22 +21,20 @@ import sqlite3
 import tempfile
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
-from typing import TypeVar
+from typing import Any
 
 log = logging.getLogger(__name__)
 
 __all__ = ["best_host_match", "query_sqlite_cookies"]
 
-_Row = TypeVar("_Row")
 
-
-def best_host_match(
-    rows: Iterable[_Row],
+def best_host_match[Row](
+    rows: Iterable[Row],
     host: str,
     *,
-    host_of: Callable[[_Row], str],
-    eligible: Callable[[_Row], bool] = lambda _row: True,
-) -> _Row | None:
+    host_of: Callable[[Row], str],
+    eligible: Callable[[Row], bool] = lambda _row: True,
+) -> Row | None:
     """Return the row whose host is the longest suffix-match of ``host``.
 
     A row matches when ``host`` equals the row's bare host (leading dots stripped,
@@ -54,20 +52,23 @@ def best_host_match(
             plaintext readers require a non-empty value.
     """
     target = host.lower()
-    best: _Row | None = None
+    best: Row | None = None
     best_len = -1
     for row in rows:
         bare = host_of(row).lstrip(".").lower()
-        if (target == bare or target.endswith("." + bare)) and eligible(row):
-            if len(bare) > best_len:
-                best = row
-                best_len = len(bare)
+        if (
+            (target == bare or target.endswith("." + bare))
+            and eligible(row)
+            and len(bare) > best_len
+        ):
+            best = row
+            best_len = len(bare)
     return best
 
 
 def query_sqlite_cookies(
     db_path: Path, sql: str, params: Sequence[object] = ()
-) -> list[tuple] | None:
+) -> list[tuple[Any, ...]] | None:
     """Copy a (possibly locked) cookie DB to a temp file and run a read-only query.
 
     Browsers hold their cookie SQLite DB open with a write lock, so we copy it to

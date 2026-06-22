@@ -1,10 +1,11 @@
-"""Entry point — patch `simple_salesforce`, then hand off to mcp-salesforce-connector."""
+"""Patch simple_salesforce, then hand off to mcp-salesforce-connector."""
 
 from __future__ import annotations
 
 import logging
 import os
 import sys
+from typing import cast
 
 from . import __version__
 from .cookies import parse_env, resolve_session
@@ -110,7 +111,7 @@ def main() -> int:
     # actionable message rather than an opaque ModuleNotFoundError for the bare
     # top-level name `src`.
     try:
-        from src.salesforce import main as connector_main  # type: ignore[import-not-found]
+        from src.salesforce import main as connector_main
     except ImportError as e:
         log.error(
             "could not import the bundled MCP Salesforce connector "
@@ -121,7 +122,8 @@ def main() -> int:
         )
         return 1
 
-    return connector_main()
+    # The connector is untyped; it returns an int exit code.
+    return cast(int, connector_main())
 
 
 if __name__ == "__main__":

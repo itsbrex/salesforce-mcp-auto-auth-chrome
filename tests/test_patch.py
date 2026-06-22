@@ -126,7 +126,6 @@ def test_retries_once_on_expired_session(monkeypatch):
 
 def test_no_retry_when_sid_unchanged(monkeypatch):
     import pytest
-
     from simple_salesforce.exceptions import SalesforceExpiredSession
 
     monkeypatch.setattr(patch, "read_sid", lambda u, b=None, p=None: "SAME")
