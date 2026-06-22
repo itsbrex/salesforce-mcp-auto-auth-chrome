@@ -27,9 +27,6 @@ venv/
 ENV/
 env/
 
-# uv
-uv.lock
-
 # Editors
 .vscode/
 .idea/
@@ -55,3 +52,6 @@ htmlcov/
 .envrc
 *.local
 claude_desktop_config.json
+
+# Local-only diagnostics / reference scripts (Cresa code-mode profile-mismatch fix)
+reference-local/
