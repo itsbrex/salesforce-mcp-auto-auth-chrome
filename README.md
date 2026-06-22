@@ -28,12 +28,27 @@ The package is a thin Python shim around `mcp-salesforce-connector`. On every AP
 
 ## Files in this repo
 
-- **`src/salesforce_mcp_auto_auth_chrome/__main__.py`** — entry point. Reads `SALESFORCE_INSTANCE_URL` from env, seeds a placeholder access token, installs the per-call patch, and hands off to `mcp-salesforce-connector`.
-- **`src/salesforce_mcp_auto_auth_chrome/patch.py`** — monkey-patches `simple_salesforce.Salesforce._call_salesforce` so every API call gets a fresh `sid` from Chrome.
-- **`src/salesforce_mcp_auto_auth_chrome/auth.py`** — reads the `sid` cookie from Chrome via `pycookiecheat`. Returns `None` on any failure so callers can defer the error to tool-call time.
+### Source (`src/salesforce_mcp_auto_auth_chrome/`)
+
+- **`__main__.py`** — entry point. Reads `SALESFORCE_INSTANCE_URL` from env (optional), resolves the org via `cookies.resolve_session`, installs the per-call patch, and hands off to `mcp-salesforce-connector`.
+- **`patch.py`** — monkey-patches `simple_salesforce.Salesforce._call_salesforce` so every API call gets a fresh `sid`. Includes upstream-signature self-check and 401/expired-session retry.
+- **`auth.py`** — re-exports `read_sid` from `cookies.py`; provides a `read_sid_from_chrome` back-compat shim. Returns `None` on any failure so callers can defer the error to tool-call time.
+- **`cookies.py`** — multi-source `read_sid` orchestrator. Walks the browser registry, dispatches to per-family readers, returns the first valid `sid`. Also handles env-var parsing (`SALESFORCE_BROWSERS`, `SALESFORCE_PROFILES`) and org auto-discovery with REST validation.
+- **`browsers.py`** — priority-ordered registry of supported browsers (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari) with macOS data dirs, Keychain service names, and profile discovery.
+- **`chromium.py`** — reads and decrypts Chromium-family cookies (AES-128-CBC via `cryptography`, key from macOS Keychain).
+- **`firefox.py`** — reads Firefox cookies from unencrypted SQLite (`moz_cookies`).
+- **`safari.py`** — parses Safari's binary `Cookies.binarycookies` format (requires Full Disk Access).
+- **`instance.py`** — normalizes Lightning URLs (`*.lightning.force.com`) to My Domain (`*.my.salesforce.com`).
+- **`validate.py`** — validates a candidate `sid` against the Salesforce REST API (`/services/oauth2/userinfo`).
+- **`utils.py`** — shared helpers: longest-suffix host matching and the temp-copy SQLite cookie query used by the Chromium/Firefox readers.
+
+### Other
+
 - **`pyproject.toml`** — package metadata + entry point. `uvx` reads this when launching.
 - **`examples/claude_desktop_config.example.json`** — copy-paste-ready Claude Desktop config snippet.
 - **`docs/how-it-works.md`** — full architecture write-up with the design decisions, what we tried and discarded, and the lessons that generalize to other MCP wrappers.
+- **`scripts/smoke.py`** — end-to-end smoke test against a live org.
+- **`tests/`** — pytest suite covering every module (browsers, chromium, firefox, safari, cookies, instance, validate, patch, auth).
 
 ---
 
