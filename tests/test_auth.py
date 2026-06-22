@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from salesforce_mcp_auto_auth_chrome import auth
 
 
@@ -15,5 +17,8 @@ def test_read_sid_from_chrome_is_chrome_scoped(monkeypatch):
 
     monkeypatch.setattr(auth, "read_sid", fake_read_sid)
 
-    assert auth.read_sid_from_chrome("https://acme.my.salesforce.com") == "SID"
+    with pytest.warns(DeprecationWarning):
+        result = auth.read_sid_from_chrome("https://acme.my.salesforce.com")
+
+    assert result == "SID"
     assert captured["browsers"] == ["chrome"]

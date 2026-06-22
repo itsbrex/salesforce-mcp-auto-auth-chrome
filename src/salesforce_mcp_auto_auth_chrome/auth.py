@@ -13,6 +13,8 @@ friendly error only when a tool is actually invoked.
 
 from __future__ import annotations
 
+import warnings
+
 from .cookies import read_sid
 
 __all__ = ["read_sid", "read_sid_from_chrome"]
@@ -21,7 +23,14 @@ __all__ = ["read_sid", "read_sid_from_chrome"]
 def read_sid_from_chrome(instance_url: str) -> str | None:
     """Back-compat shim: read the `sid` from Chrome's default-priority profiles.
 
-    Prefer `read_sid` for multi-browser support. Retained so existing callers
-    and external imports keep working.
+    .. deprecated::
+        Use :func:`read_sid` for multi-browser support. This shim is scheduled
+        for removal in the next minor release.
     """
+    warnings.warn(
+        "read_sid_from_chrome is deprecated; use read_sid (multi-browser "
+        "support) instead. This shim will be removed in the next minor release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return read_sid(instance_url, browsers=["chrome"])
