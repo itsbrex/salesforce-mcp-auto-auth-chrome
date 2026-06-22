@@ -26,6 +26,8 @@ from .utils import best_host_match, query_sqlite_cookies
 
 log = logging.getLogger(__name__)
 
+__all__ = ["read_chromium_cookie", "list_salesforce_sids"]
+
 _SALT = b"saltysalt"
 _IV = b" " * 16
 _ITERATIONS = 1003
@@ -57,7 +59,7 @@ def read_chromium_cookie(source: CookieSource, host: str, name: str) -> str | No
         return None
     try:
         return _decrypt(bytes(encrypted), _derive_key(password), host_key) or None
-    except Exception as e:  # noqa: BLE001 — decryption failures must not raise
+    except (ValueError, TypeError) as e:  # decryption failures must not raise
         log.warning(
             "decrypt failed for %s/%s: %s: %s",
             source.browser,
@@ -104,7 +106,7 @@ def list_salesforce_sids(source: CookieSource) -> list[tuple[str, str]]:
             key = _derive_key(password)
         try:
             sid = _decrypt(bytes(encrypted), key, host_key)
-        except Exception as e:  # noqa: BLE001
+        except (ValueError, TypeError) as e:
             log.warning(
                 "decrypt failed for %s/%s: %s: %s",
                 source.browser,
@@ -170,7 +172,7 @@ def _keychain_password(service: str | None, account: str | None) -> str | None:
             text=True,
             timeout=10,
         )
-    except Exception as e:  # noqa: BLE001
+    except (OSError, subprocess.SubprocessError) as e:
         log.warning("Keychain lookup failed for %s: %s", service, e)
         return None
     if result.returncode != 0:

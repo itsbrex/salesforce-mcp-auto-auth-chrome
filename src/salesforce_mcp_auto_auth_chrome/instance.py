@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
+__all__ = ["normalize_host", "normalize_instance_url", "is_salesforce_host"]
+
 _LIGHTNING_SUFFIX = ".lightning.force.com"
 _MY_DOMAIN_SUFFIX = ".my.salesforce.com"
 

@@ -33,6 +33,8 @@ from .auth import read_sid
 
 log = logging.getLogger(__name__)
 
+__all__ = ["install", "PENDING_LOGIN_SENTINEL"]
+
 # Sentinel seeded into SALESFORCE_ACCESS_TOKEN by __main__ when no sid is
 # available at startup, so the connector can construct without a real token.
 # The per-call patch always overwrites the token with a freshly read sid (or

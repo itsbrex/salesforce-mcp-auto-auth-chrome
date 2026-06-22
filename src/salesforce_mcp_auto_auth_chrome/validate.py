@@ -21,6 +21,8 @@ from urllib.request import Request, urlopen
 
 log = logging.getLogger(__name__)
 
+__all__ = ["session_is_valid"]
+
 
 def session_is_valid(instance_url: str, sid: str, timeout: float = 8.0) -> bool:
     """Return True if `sid` authorizes REST calls against `instance_url`.
@@ -33,7 +35,7 @@ def session_is_valid(instance_url: str, sid: str, timeout: float = 8.0) -> bool:
     try:
         with urlopen(req, timeout=timeout) as resp:
             return getattr(resp, "status", None) == 200
-    except Exception as e:  # noqa: BLE001 — any failure means "not usable"
+    except (OSError, ValueError) as e:  # URL/HTTP/network failure → "not usable"
         log.info(
             "session validation failed for %s: %s: %s",
             instance_url,

@@ -25,6 +25,16 @@ from .validate import session_is_valid
 
 log = logging.getLogger(__name__)
 
+__all__ = [
+    "OrgCandidate",
+    "ResolvedSession",
+    "read_sid",
+    "read_sid_with_source",
+    "discover_orgs",
+    "resolve_session",
+    "parse_env",
+]
+
 
 @dataclass(frozen=True)
 class OrgCandidate:

@@ -7,6 +7,7 @@ Each supported browser is described by a `BrowserConfig`. Discovery walks each
 browser's on-disk data directory and yields one `CookieSource` per profile that
 actually contains a cookie store. The registry order is the search priority.
 """
+
 from __future__ import annotations
 
 import logging
@@ -14,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+__all__ = ["BrowserConfig", "CookieSource", "discover_sources"]
 
 _HOME = Path.home()
 _APP_SUPPORT = _HOME / "Library" / "Application Support"
@@ -56,33 +59,55 @@ class CookieSource:
 # Priority order: first match wins in the orchestrator.
 BROWSERS: tuple[BrowserConfig, ...] = (
     BrowserConfig(
-        "chrome", "chromium", _APP_SUPPORT / "Google" / "Chrome",
-        "Chrome Safe Storage", "Chrome",
+        "chrome",
+        "chromium",
+        _APP_SUPPORT / "Google" / "Chrome",
+        "Chrome Safe Storage",
+        "Chrome",
     ),
     BrowserConfig(
-        "comet", "chromium", _APP_SUPPORT / "Comet",
-        "Comet Safe Storage", "Comet",
+        "comet",
+        "chromium",
+        _APP_SUPPORT / "Comet",
+        "Comet Safe Storage",
+        "Comet",
     ),
     BrowserConfig(
-        "arc", "chromium", _APP_SUPPORT / "Arc" / "User Data",
-        "Arc Safe Storage", "Arc",
+        "arc",
+        "chromium",
+        _APP_SUPPORT / "Arc" / "User Data",
+        "Arc Safe Storage",
+        "Arc",
     ),
     BrowserConfig(
-        "edge", "chromium", _APP_SUPPORT / "Microsoft Edge",
-        "Microsoft Edge Safe Storage", "Microsoft Edge",
+        "edge",
+        "chromium",
+        _APP_SUPPORT / "Microsoft Edge",
+        "Microsoft Edge Safe Storage",
+        "Microsoft Edge",
     ),
     BrowserConfig(
-        "brave", "chromium",
+        "brave",
+        "chromium",
         _APP_SUPPORT / "BraveSoftware" / "Brave-Browser",
-        "Brave Safe Storage", "Brave",
+        "Brave Safe Storage",
+        "Brave",
     ),
     BrowserConfig(
-        "firefox", "firefox", _APP_SUPPORT / "Firefox" / "Profiles",
+        "firefox",
+        "firefox",
+        _APP_SUPPORT / "Firefox" / "Profiles",
     ),
     BrowserConfig(
-        "safari", "safari",
-        _HOME / "Library" / "Containers" / "com.apple.Safari" / "Data"
-        / "Library" / "Cookies",
+        "safari",
+        "safari",
+        _HOME
+        / "Library"
+        / "Containers"
+        / "com.apple.Safari"
+        / "Data"
+        / "Library"
+        / "Cookies",
     ),
 )
 
@@ -104,10 +129,16 @@ def _chromium_sources(cfg: BrowserConfig) -> list[CookieSource]:
         if not cookies.is_file():
             cookies = child / "Cookies"
         if cookies.is_file():
-            out.append(CookieSource(
-                cfg.key, child.name, cfg.family, cookies,
-                cfg.keychain_service, cfg.keychain_account,
-            ))
+            out.append(
+                CookieSource(
+                    cfg.key,
+                    child.name,
+                    cfg.family,
+                    cookies,
+                    cfg.keychain_service,
+                    cfg.keychain_account,
+                )
+            )
     return out
 
 
@@ -118,9 +149,16 @@ def _firefox_sources(cfg: BrowserConfig) -> list[CookieSource]:
     for child in sorted(cfg.base_dir.iterdir()):
         cookies = child / "cookies.sqlite"
         if child.is_dir() and cookies.is_file():
-            out.append(CookieSource(
-                cfg.key, child.name, cfg.family, cookies, None, None,
-            ))
+            out.append(
+                CookieSource(
+                    cfg.key,
+                    child.name,
+                    cfg.family,
+                    cookies,
+                    None,
+                    None,
+                )
+            )
     return out
 
 

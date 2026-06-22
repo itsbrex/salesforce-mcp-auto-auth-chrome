@@ -18,6 +18,8 @@ from .utils import best_host_match, query_sqlite_cookies
 
 log = logging.getLogger(__name__)
 
+__all__ = ["list_salesforce_sids", "read_firefox_cookie"]
+
 
 def list_salesforce_sids(source: CookieSource) -> list[tuple[str, str]]:
     """Return all ``(host, sid)`` Salesforce session cookies in this store."""

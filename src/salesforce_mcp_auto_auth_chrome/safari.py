@@ -25,6 +25,8 @@ from .utils import best_host_match
 
 log = logging.getLogger(__name__)
 
+__all__ = ["list_salesforce_sids", "read_safari_cookie", "parse_binarycookies"]
+
 
 def list_salesforce_sids(source: CookieSource) -> list[tuple[str, str]]:
     """Return all ``(host, sid)`` Salesforce session cookies in this store."""
@@ -34,7 +36,7 @@ def list_salesforce_sids(source: CookieSource) -> list[tuple[str, str]]:
         return []
     try:
         cookies = parse_binarycookies(data)
-    except Exception:  # noqa: BLE001
+    except (ValueError, struct.error, IndexError):
         return []
     return [
         (host, value)
@@ -52,7 +54,7 @@ def read_safari_cookie(source: CookieSource, host: str, name: str) -> str | None
         return None
     try:
         cookies = parse_binarycookies(data)
-    except Exception as e:  # noqa: BLE001
+    except (ValueError, struct.error, IndexError) as e:
         log.warning("Safari cookie parse failed: %s: %s", type(e).__name__, e)
         return None
 
