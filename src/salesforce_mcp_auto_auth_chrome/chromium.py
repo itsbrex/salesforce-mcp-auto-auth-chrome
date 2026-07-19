@@ -20,18 +20,61 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-from .browsers import CookieSource
 from .instance import is_salesforce_host
+from .models import BrowserConfig, CookieSource
 from .utils import best_host_match, query_sqlite_cookies
 
 log = logging.getLogger(__name__)
 
-__all__ = ["read_chromium_cookie", "list_salesforce_sids"]
+__all__ = ["READER", "read_chromium_cookie", "list_salesforce_sids"]
 
 _SALT = b"saltysalt"
 _IV = b" " * 16
 _ITERATIONS = 1003
 _KEY_LEN = 16
+
+# Chromium profiles that never hold a user session.
+_SKIP_PROFILES = {"System Profile", "Guest Profile"}
+
+
+class ChromiumReader:
+    """`CookieReader` for Chromium-family browsers (Chrome, Comet, Arc, ...)."""
+
+    def discover(self, cfg: BrowserConfig) -> list[CookieSource]:
+        out: list[CookieSource] = []
+        if not cfg.base_dir.is_dir():
+            return out
+        for child in sorted(cfg.base_dir.iterdir()):
+            if not child.is_dir() or child.name in _SKIP_PROFILES:
+                continue
+            if child.name != "Default" and not child.name.startswith("Profile "):
+                continue
+            # Newer Chromium uses <profile>/Network/Cookies; macOS today uses
+            # <profile>/Cookies. Prefer Network/ when present.
+            cookies = child / "Network" / "Cookies"
+            if not cookies.is_file():
+                cookies = child / "Cookies"
+            if cookies.is_file():
+                out.append(
+                    CookieSource(
+                        cfg.key,
+                        child.name,
+                        cfg.family,
+                        cookies,
+                        cfg.keychain_service,
+                        cfg.keychain_account,
+                    )
+                )
+        return out
+
+    def read(self, source: CookieSource, host: str, name: str) -> str | None:
+        return read_chromium_cookie(source, host, name)
+
+    def list_sids(self, source: CookieSource) -> list[tuple[str, str]]:
+        return list_salesforce_sids(source)
+
+
+READER = ChromiumReader()
 
 
 def read_chromium_cookie(source: CookieSource, host: str, name: str) -> str | None:

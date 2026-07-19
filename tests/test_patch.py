@@ -23,11 +23,14 @@ def _install_capturing(monkeypatch, **kwargs):
     def _orig(self, method, url, name="", retries=0, max_retries=3, **kw):
         calls["session_id"] = self.session_id
         calls["auth"] = self.headers["Authorization"]
+        calls["user_agent"] = self.headers.get("User-Agent")
         return "OK"
 
     monkeypatch.setattr(
         simple_salesforce.Salesforce, "_call_salesforce", _orig, raising=False
     )
+    # Pin the UA so install() never makes a live DevTools probe during tests.
+    kwargs.setdefault("user_agent", "UA-TEST")
     patch.install("https://acme.my.salesforce.com", **kwargs)
     return simple_salesforce.Salesforce._call_salesforce, calls
 
@@ -52,6 +55,7 @@ def test_prefers_pinned_profile(monkeypatch):
 
     assert result == "OK"
     assert calls["auth"] == "Bearer PINNED_SID"
+    assert calls["user_agent"] == "UA-TEST"  # browser UA sent, not requests default
     assert seen[0] == (["chrome"], ["Profile 4"])  # pinned tried first
 
 
@@ -91,7 +95,7 @@ def test_warns_on_upstream_signature_change(monkeypatch, caplog):
     monkeypatch.setattr(patch, "read_sid", lambda u, b=None, p=None: "SID")
 
     with caplog.at_level("WARNING"):
-        patch.install("https://acme.my.salesforce.com")
+        patch.install("https://acme.my.salesforce.com", user_agent="UA-TEST")
 
     assert any("signature changed" in r.message for r in caplog.records)
 
@@ -113,7 +117,7 @@ def test_retries_once_on_expired_session(monkeypatch):
     monkeypatch.setattr(
         simple_salesforce.Salesforce, "_call_salesforce", orig, raising=False
     )
-    patch.install("https://acme.my.salesforce.com")
+    patch.install("https://acme.my.salesforce.com", user_agent="UA-TEST")
     patched = simple_salesforce.Salesforce._call_salesforce
 
     sf = _FakeSF()
@@ -122,6 +126,7 @@ def test_retries_once_on_expired_session(monkeypatch):
     assert result == "OK_AFTER_RETRY"
     assert state["n"] == 2  # retried exactly once
     assert sf.headers["Authorization"] == "Bearer SID2"
+    assert sf.headers["User-Agent"] == "UA-TEST"  # UA survives the expiry retry
 
 
 def test_no_retry_when_sid_unchanged(monkeypatch):
@@ -136,7 +141,7 @@ def test_no_retry_when_sid_unchanged(monkeypatch):
     monkeypatch.setattr(
         simple_salesforce.Salesforce, "_call_salesforce", orig, raising=False
     )
-    patch.install("https://acme.my.salesforce.com")
+    patch.install("https://acme.my.salesforce.com", user_agent="UA-TEST")
     patched = simple_salesforce.Salesforce._call_salesforce
 
     with pytest.raises(SalesforceExpiredSession):

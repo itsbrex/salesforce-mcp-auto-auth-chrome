@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from salesforce_mcp_auto_auth_chrome import cookies
+from salesforce_mcp_auto_auth_chrome import chromium, cookies, firefox, safari
 from salesforce_mcp_auto_auth_chrome.browsers import CookieSource
 
 
@@ -16,10 +16,10 @@ def _src(browser: str, family: str) -> CookieSource:
 def test_returns_first_nonempty_sid_in_priority_order(monkeypatch):
     sources = [_src("chrome", "chromium"), _src("comet", "chromium")]
     monkeypatch.setattr(cookies, "discover_sources", lambda b, p: sources)
-    # chrome has no sid, comet does
+    # chrome has no sid, comet does — dispatch goes through the reader interface
     monkeypatch.setattr(
-        cookies,
-        "read_chromium_cookie",
+        chromium.READER,
+        "read",
         lambda s, h, n: "COMET_SID" if s.browser == "comet" else None,
     )
 
@@ -30,7 +30,7 @@ def test_dispatches_by_family(monkeypatch):
     monkeypatch.setattr(
         cookies, "discover_sources", lambda b, p: [_src("safari", "safari")]
     )
-    monkeypatch.setattr(cookies, "read_safari_cookie", lambda s, h, n: "SAFARI_SID")
+    monkeypatch.setattr(safari.READER, "read", lambda s, h, n: "SAFARI_SID")
 
     assert cookies.read_sid("https://acme.my.salesforce.com") == "SAFARI_SID"
 
@@ -41,8 +41,8 @@ def test_skips_sources_that_raise(monkeypatch):
 
     sources = [_src("chrome", "chromium"), _src("firefox", "firefox")]
     monkeypatch.setattr(cookies, "discover_sources", lambda b, p: sources)
-    monkeypatch.setattr(cookies, "read_chromium_cookie", boom)
-    monkeypatch.setattr(cookies, "read_firefox_cookie", lambda s, h, n: "FF_SID")
+    monkeypatch.setattr(chromium.READER, "read", boom)
+    monkeypatch.setattr(firefox.READER, "read", lambda s, h, n: "FF_SID")
 
     assert cookies.read_sid("https://acme.my.salesforce.com") == "FF_SID"
 

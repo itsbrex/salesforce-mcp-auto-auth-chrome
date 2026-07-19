@@ -15,12 +15,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from . import chromium, firefox, safari
-from .browsers import CookieSource, discover_sources
-from .chromium import read_chromium_cookie
-from .firefox import read_firefox_cookie
+from .browsers import CookieSource, discover_sources, reader_for
 from .instance import normalize_instance_url
-from .safari import read_safari_cookie
 from .validate import session_is_valid
 
 log = logging.getLogger(__name__)
@@ -117,23 +113,11 @@ def read_sid_with_source(
 
 
 def _read_from_source(source: CookieSource, host: str) -> str | None:
-    if source.family == "chromium":
-        return read_chromium_cookie(source, host, "sid")
-    if source.family == "firefox":
-        return read_firefox_cookie(source, host, "sid")
-    if source.family == "safari":
-        return read_safari_cookie(source, host, "sid")
-    return None
+    return reader_for(source.family).read(source, host, "sid")
 
 
 def _list_sids_from_source(source: CookieSource) -> list[tuple[str, str]]:
-    if source.family == "chromium":
-        return chromium.list_salesforce_sids(source)
-    if source.family == "firefox":
-        return firefox.list_salesforce_sids(source)
-    if source.family == "safari":
-        return safari.list_salesforce_sids(source)
-    return []
+    return reader_for(source.family).list_sids(source)
 
 
 def discover_orgs(

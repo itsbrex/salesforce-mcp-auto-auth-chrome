@@ -6,7 +6,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from salesforce_mcp_auto_auth_chrome import cookies, firefox
+from salesforce_mcp_auto_auth_chrome import chromium, cookies, firefox
 from salesforce_mcp_auto_auth_chrome.browsers import CookieSource
 
 
@@ -46,8 +46,8 @@ def test_discover_orgs_maps_lightning_and_ranks_my_domain_first(monkeypatch):
     src = _src("chrome", "chromium")
     monkeypatch.setattr(cookies, "discover_sources", lambda b, p: [src])
     monkeypatch.setattr(
-        cookies.chromium,
-        "list_salesforce_sids",
+        chromium.READER,
+        "list_sids",
         lambda s: [
             (".acme.lightning.force.com", "LIGHTNING_SID"),
             (".acme.my.salesforce.com", "MY_SID"),
@@ -65,8 +65,8 @@ def test_discover_orgs_dedupes(monkeypatch):
     src = _src("chrome", "chromium")
     monkeypatch.setattr(cookies, "discover_sources", lambda b, p: [src])
     monkeypatch.setattr(
-        cookies.chromium,
-        "list_salesforce_sids",
+        chromium.READER,
+        "list_sids",
         lambda s: [(".acme.my.salesforce.com", "SID")] * 3,
     )
 

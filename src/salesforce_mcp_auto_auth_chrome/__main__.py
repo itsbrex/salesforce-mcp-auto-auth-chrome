@@ -123,7 +123,15 @@ def main() -> int:
         return 1
 
     # The connector is untyped; it returns an int exit code.
-    return cast(int, connector_main())
+    try:
+        return cast(int, connector_main())
+    except KeyboardInterrupt:
+        # Ctrl+C / SIGINT during the stdio server loop. The bundled connector's
+        # `asyncio.run(server.run())` re-raises KeyboardInterrupt and dumps a
+        # traceback; swallow it here for a clean shutdown. (KeyboardInterrupt is a
+        # BaseException, so the `except ImportError` above does not catch it.)
+        log.info("interrupted; shutting down.")
+        return 0
 
 
 if __name__ == "__main__":

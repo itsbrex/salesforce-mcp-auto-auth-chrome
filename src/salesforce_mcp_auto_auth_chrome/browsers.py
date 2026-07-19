@@ -3,57 +3,34 @@
 
 """Browser registry and profile discovery for cookie reading (macOS).
 
-Each supported browser is described by a `BrowserConfig`. Discovery walks each
-browser's on-disk data directory and yields one `CookieSource` per profile that
-actually contains a cookie store. The registry order is the search priority.
+Each supported browser is described by a `BrowserConfig`. Every browser family
+has one `CookieReader` adapter (`chromium`/`firefox`/`safari`) registered in
+`READERS`; discovery and reading both dispatch through that single registry
+rather than switching on `CookieSource.family`. The registry order in `BROWSERS`
+is the search priority.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from pathlib import Path
+
+from . import chromium, firefox, safari
+from .models import BrowserConfig, CookieReader, CookieSource
 
 log = logging.getLogger(__name__)
 
-__all__ = ["BrowserConfig", "CookieSource", "discover_sources"]
+__all__ = [
+    "BrowserConfig",
+    "CookieReader",
+    "CookieSource",
+    "READERS",
+    "reader_for",
+    "discover_sources",
+]
 
 _HOME = Path.home()
 _APP_SUPPORT = _HOME / "Library" / "Application Support"
-
-
-@dataclass(frozen=True)
-class BrowserConfig:
-    """Static description of a browser's cookie storage on macOS.
-
-    Args:
-        key: Lowercase identifier, e.g. ``"chrome"``.
-        family: One of ``"chromium"``, ``"firefox"``, ``"safari"`` — selects
-            the reader used for this browser's cookie store.
-        base_dir: The browser's data directory (profiles live under it for
-            chromium/firefox; for safari this is the Cookies directory).
-        keychain_service: macOS Keychain service holding the Safe Storage key
-            (chromium only; ``None`` for firefox/safari).
-        keychain_account: macOS Keychain account for the Safe Storage key.
-    """
-
-    key: str
-    family: str
-    base_dir: Path
-    keychain_service: str | None = None
-    keychain_account: str | None = None
-
-
-@dataclass(frozen=True)
-class CookieSource:
-    """A single resolved cookie store (one browser profile)."""
-
-    browser: str
-    profile: str
-    family: str
-    path: Path
-    keychain_service: str | None
-    keychain_account: str | None
 
 
 # Priority order: first match wins in the orchestrator.
@@ -111,62 +88,18 @@ BROWSERS: tuple[BrowserConfig, ...] = (
     ),
 )
 
-_CHROMIUM_SKIP = {"System Profile", "Guest Profile"}
+# The single dispatch table: family -> its cookie reader. Every browser family
+# in BROWSERS must have an entry here.
+READERS: dict[str, CookieReader] = {
+    "chromium": chromium.READER,
+    "firefox": firefox.READER,
+    "safari": safari.READER,
+}
 
 
-def _chromium_sources(cfg: BrowserConfig) -> list[CookieSource]:
-    out: list[CookieSource] = []
-    if not cfg.base_dir.is_dir():
-        return out
-    for child in sorted(cfg.base_dir.iterdir()):
-        if not child.is_dir() or child.name in _CHROMIUM_SKIP:
-            continue
-        if child.name != "Default" and not child.name.startswith("Profile "):
-            continue
-        # Newer Chromium uses <profile>/Network/Cookies; macOS today uses
-        # <profile>/Cookies. Prefer Network/ when present.
-        cookies = child / "Network" / "Cookies"
-        if not cookies.is_file():
-            cookies = child / "Cookies"
-        if cookies.is_file():
-            out.append(
-                CookieSource(
-                    cfg.key,
-                    child.name,
-                    cfg.family,
-                    cookies,
-                    cfg.keychain_service,
-                    cfg.keychain_account,
-                )
-            )
-    return out
-
-
-def _firefox_sources(cfg: BrowserConfig) -> list[CookieSource]:
-    out: list[CookieSource] = []
-    if not cfg.base_dir.is_dir():
-        return out
-    for child in sorted(cfg.base_dir.iterdir()):
-        cookies = child / "cookies.sqlite"
-        if child.is_dir() and cookies.is_file():
-            out.append(
-                CookieSource(
-                    cfg.key,
-                    child.name,
-                    cfg.family,
-                    cookies,
-                    None,
-                    None,
-                )
-            )
-    return out
-
-
-def _safari_sources(cfg: BrowserConfig) -> list[CookieSource]:
-    cookies = cfg.base_dir / "Cookies.binarycookies"
-    if cookies.is_file():
-        return [CookieSource(cfg.key, "default", cfg.family, cookies, None, None)]
-    return []
+def reader_for(family: str) -> CookieReader:
+    """Return the `CookieReader` for a browser family (see `READERS`)."""
+    return READERS[family]
 
 
 def discover_sources(
@@ -195,14 +128,7 @@ def discover_sources(
 
     sources: list[CookieSource] = []
     for cfg in configs:
-        if cfg.family == "chromium":
-            found = _chromium_sources(cfg)
-        elif cfg.family == "firefox":
-            found = _firefox_sources(cfg)
-        elif cfg.family == "safari":
-            found = _safari_sources(cfg)
-        else:  # pragma: no cover — registry is closed
-            found = []
+        found = reader_for(cfg.family).discover(cfg)
         if profile_filter is not None:
             found = [s for s in found if s.profile.lower() in profile_filter]
         sources.extend(found)

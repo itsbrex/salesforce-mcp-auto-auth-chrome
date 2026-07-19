@@ -19,13 +19,37 @@ from __future__ import annotations
 import logging
 import struct
 
-from .browsers import CookieSource
 from .instance import is_salesforce_host
+from .models import BrowserConfig, CookieSource
 from .utils import best_host_match
 
 log = logging.getLogger(__name__)
 
-__all__ = ["list_salesforce_sids", "read_safari_cookie", "parse_binarycookies"]
+__all__ = [
+    "READER",
+    "list_salesforce_sids",
+    "read_safari_cookie",
+    "parse_binarycookies",
+]
+
+
+class SafariReader:
+    """`CookieReader` for Safari's single ``Cookies.binarycookies`` store."""
+
+    def discover(self, cfg: BrowserConfig) -> list[CookieSource]:
+        cookies = cfg.base_dir / "Cookies.binarycookies"
+        if cookies.is_file():
+            return [CookieSource(cfg.key, "default", cfg.family, cookies, None, None)]
+        return []
+
+    def read(self, source: CookieSource, host: str, name: str) -> str | None:
+        return read_safari_cookie(source, host, name)
+
+    def list_sids(self, source: CookieSource) -> list[tuple[str, str]]:
+        return list_salesforce_sids(source)
+
+
+READER = SafariReader()
 
 
 def list_salesforce_sids(source: CookieSource) -> list[tuple[str, str]]:

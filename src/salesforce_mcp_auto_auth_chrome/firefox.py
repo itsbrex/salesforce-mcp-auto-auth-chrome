@@ -12,13 +12,38 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from .browsers import CookieSource
 from .instance import is_salesforce_host
+from .models import BrowserConfig, CookieSource
 from .utils import best_host_match, query_sqlite_cookies
 
 log = logging.getLogger(__name__)
 
-__all__ = ["list_salesforce_sids", "read_firefox_cookie"]
+__all__ = ["READER", "list_salesforce_sids", "read_firefox_cookie"]
+
+
+class FirefoxReader:
+    """`CookieReader` for Firefox (plaintext ``cookies.sqlite``, no Keychain)."""
+
+    def discover(self, cfg: BrowserConfig) -> list[CookieSource]:
+        out: list[CookieSource] = []
+        if not cfg.base_dir.is_dir():
+            return out
+        for child in sorted(cfg.base_dir.iterdir()):
+            cookies = child / "cookies.sqlite"
+            if child.is_dir() and cookies.is_file():
+                out.append(
+                    CookieSource(cfg.key, child.name, cfg.family, cookies, None, None)
+                )
+        return out
+
+    def read(self, source: CookieSource, host: str, name: str) -> str | None:
+        return read_firefox_cookie(source, host, name)
+
+    def list_sids(self, source: CookieSource) -> list[tuple[str, str]]:
+        return list_salesforce_sids(source)
+
+
+READER = FirefoxReader()
 
 
 def list_salesforce_sids(source: CookieSource) -> list[tuple[str, str]]:

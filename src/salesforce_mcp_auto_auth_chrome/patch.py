@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .auth import read_sid
+from .useragent import resolve_user_agent
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class _PatchConfig:
     pin_profile: str | None
     browsers: list[str] | None
     profiles: list[str] | None
+    user_agent: str
 
 
 def _fresh_sid(cfg: _PatchConfig) -> str | None:
@@ -141,6 +143,11 @@ def _patched_call(
             f"retry. (No 'sid' cookie found.)"
         )
     _apply_sid(sf, sid)
+    # Send a real browser User-Agent instead of requests' `python-requests/x.y`
+    # default, so this traffic matches the browser whose session we're using
+    # rather than fingerprinting as a bot. Set per call (the connector copies
+    # `self.headers` on every request); persists across the expiry retry below.
+    sf.headers["User-Agent"] = cfg.user_agent
     try:
         return orig_call(
             sf,
@@ -176,6 +183,7 @@ def install(
     pin_profile: str | None = None,
     browsers: list[str] | None = None,
     profiles: list[str] | None = None,
+    user_agent: str | None = None,
 ) -> None:
     """Install the per-call sid refresh patch.
 
@@ -188,10 +196,14 @@ def install(
         pin_profile: Profile name of the resolved source to prefer per-call.
         browsers: User-configured browser keys (fallback search scope).
         profiles: User-configured profile names (fallback search scope).
+        user_agent: Browser User-Agent to send on every API call. Defaults to
+            `resolve_user_agent()` (env override → live browser → fallback);
+            pass explicitly to bypass the live probe (e.g. in tests).
     """
     import simple_salesforce  # local import keeps cost off the no-op path
 
-    cfg = _PatchConfig(instance_url, pin_browser, pin_profile, browsers, profiles)
+    ua = user_agent if user_agent is not None else resolve_user_agent()
+    cfg = _PatchConfig(instance_url, pin_browser, pin_profile, browsers, profiles, ua)
     orig_call = simple_salesforce.Salesforce._call_salesforce  # type: ignore[attr-defined]
     _signature_ok(orig_call)
     expired_exc = _resolve_expired_exc()
