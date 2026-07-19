@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from typing import cast
 
 from . import __version__
+from .browsers import BROWSERS
 from .orgs import resolve_session
 from .patch import PENDING_LOGIN_SENTINEL
 from .patch import install as install_patch
@@ -26,14 +27,28 @@ _OAUTH_ENV_VARS = (
 def parse_env(
     environ: Mapping[str, str],
 ) -> tuple[list[str] | None, list[str] | None]:
-    """Parse ``SALESFORCE_BROWSERS`` / ``SALESFORCE_PROFILES`` env vars.
+    """Parse the browser/profile scoping env vars.
 
-    Each is a comma-separated list. Returns ``(browsers, profiles)`` where each
-    element is a list (order preserved) or ``None`` when unset/empty.
+    Three comma-separated lists control which cookie stores are scanned:
+
+    - ``SALESFORCE_BROWSERS`` — allowlist of browser keys, in priority order.
+    - ``SALESFORCE_SKIP_BROWSERS`` — denylist of browser keys to exclude (applied
+      after the allowlist; e.g. ``firefox`` to skip probing Firefox entirely).
+    - ``SALESFORCE_PROFILES`` — profile names to restrict to.
+
+    Returns ``(browsers, profiles)``. ``browsers`` is ``None`` (meaning "all
+    registered browsers") only when neither the allowlist nor the denylist is
+    set; once a denylist is applied it becomes an explicit list (possibly empty,
+    meaning "scan nothing").
     """
-    return _split(environ.get("SALESFORCE_BROWSERS")), _split(
-        environ.get("SALESFORCE_PROFILES")
-    )
+    browsers = _split(environ.get("SALESFORCE_BROWSERS"))
+    profiles = _split(environ.get("SALESFORCE_PROFILES"))
+    skip = _split(environ.get("SALESFORCE_SKIP_BROWSERS"))
+    if skip:
+        excluded = {s.lower() for s in skip}
+        base = browsers if browsers is not None else [cfg.key for cfg in BROWSERS]
+        browsers = [b for b in base if b.lower() not in excluded]
+    return browsers, profiles
 
 
 def _split(value: str | None) -> list[str] | None:

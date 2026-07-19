@@ -141,3 +141,33 @@ def test_parse_env_reads_lists():
 
 def test_parse_env_empty_returns_none():
     assert entry.parse_env({}) == (None, None)
+
+
+def test_parse_env_skip_excludes_from_full_registry():
+    # No allowlist + skip firefox -> every registered browser except firefox.
+    browsers, _ = entry.parse_env({"SALESFORCE_SKIP_BROWSERS": "firefox"})
+    assert browsers is not None
+    assert "firefox" not in browsers
+    assert "chrome" in browsers and "safari" in browsers
+
+
+def test_parse_env_skip_is_case_insensitive():
+    browsers, _ = entry.parse_env({"SALESFORCE_SKIP_BROWSERS": "FireFox"})
+    assert browsers is not None
+    assert "firefox" not in browsers
+
+
+def test_parse_env_skip_applies_after_allowlist():
+    env = {"SALESFORCE_BROWSERS": "comet, firefox, chrome",
+           "SALESFORCE_SKIP_BROWSERS": "firefox"}
+    browsers, _ = entry.parse_env(env)
+    assert browsers == ["comet", "chrome"]  # order preserved, firefox removed
+
+
+def test_parse_env_skip_all_scans_nothing():
+    # Excluding every browser yields an explicit empty list, not None (= all).
+    from salesforce_mcp_auto_auth_chrome.browsers import BROWSERS
+
+    all_keys = ",".join(cfg.key for cfg in BROWSERS)
+    browsers, _ = entry.parse_env({"SALESFORCE_SKIP_BROWSERS": all_keys})
+    assert browsers == []

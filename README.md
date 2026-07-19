@@ -286,6 +286,7 @@ Every API call. The `sid` from Chrome is read fresh each time — Salesforce ses
 Restrict or reorder the search with optional env vars in your Claude Desktop config:
 
 - `SALESFORCE_BROWSERS` — comma-separated browser keys, in priority order. Keys: `chrome`, `comet`, `arc`, `edge`, `brave`, `firefox`, `safari`. Example: `"SALESFORCE_BROWSERS": "comet, chrome"`.
+- `SALESFORCE_SKIP_BROWSERS` — comma-separated browser keys to exclude, applied after the allowlist. Use it to skip probing a browser without listing every other one — e.g. `"SALESFORCE_SKIP_BROWSERS": "firefox"` scans every supported browser except Firefox.
 - `SALESFORCE_PROFILES` — comma-separated profile names to limit to (e.g. `"Default, Profile 1"`). Applies across all selected browsers.
 
 **Safari note**: reading Safari cookies requires **Full Disk Access** for the app that launches the MCP server (Claude Desktop or your terminal). Grant it in System Settings → Privacy & Security → Full Disk Access. Without it, Safari is silently skipped and other browsers are still used.
