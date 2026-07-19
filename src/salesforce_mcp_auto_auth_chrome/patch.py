@@ -29,7 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .auth import read_sid
+from .cookies import read_sid
 from .useragent import resolve_user_agent
 
 log = logging.getLogger(__name__)

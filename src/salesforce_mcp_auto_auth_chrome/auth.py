@@ -1,14 +1,14 @@
-"""Read the Salesforce `sid` session cookie from the user's browsers (macOS).
+"""Deprecated back-compat surface for reading the Salesforce `sid` cookie.
 
-The `sid` cookie is what a browser stores when you're logged into a Salesforce
-org. It's identical in value (and works identically) to a session-based API
-access token, so we can use it directly as an `Authorization: Bearer <sid>`
-header.
+The live code path reads sids via `cookies.read_sid` directly — nothing in this
+package imports from here anymore. This module survives only to keep two public
+names importable for external callers written against the old layout:
 
-Reading scans multiple browsers and profiles (see `cookies.read_sid`). This
-module deliberately swallows all errors and returns `None` instead of raising,
-so the MCP server can start even when no session is available and surface a
-friendly error only when a tool is actually invoked.
+- `read_sid` — re-exported from `cookies` (its current home).
+- `read_sid_from_chrome` — the single-browser shim, deprecated and scheduled for
+  removal in the next minor release.
+
+Both are slated to go with `auth.py` itself at the 0.2.0 bump.
 """
 
 from __future__ import annotations
