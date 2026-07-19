@@ -25,7 +25,7 @@ _URL = "https://example.my.salesforce.com"
 
 
 class _Resolved:
-    """Stand-in for `cookies.ResolvedSession`."""
+    """Stand-in for `orgs.ResolvedSession`."""
 
     def __init__(self, instance_url, sid, browser=None, profile=None):
         self.instance_url = instance_url
@@ -132,3 +132,12 @@ def test_non_darwin_platform_exits_before_resolution(monkeypatch, harness):
 
     assert rc == 1
     assert not harness["connector_ran"]
+
+
+def test_parse_env_reads_lists():
+    env = {"SALESFORCE_BROWSERS": "comet, chrome", "SALESFORCE_PROFILES": "Default"}
+    assert entry.parse_env(env) == (["comet", "chrome"], ["Default"])
+
+
+def test_parse_env_empty_returns_none():
+    assert entry.parse_env({}) == (None, None)

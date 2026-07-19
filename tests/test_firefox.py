@@ -7,7 +7,10 @@ import sqlite3
 from pathlib import Path
 
 from salesforce_mcp_auto_auth_chrome.browsers import CookieSource
-from salesforce_mcp_auto_auth_chrome.firefox import read_firefox_cookie
+from salesforce_mcp_auto_auth_chrome.firefox import (
+    list_salesforce_sids,
+    read_firefox_cookie,
+)
 
 
 def _make_db(path: Path, rows: list[tuple[str, str]]) -> None:
@@ -44,3 +47,23 @@ def test_returns_none_when_no_match(tmp_path):
     _make_db(db, [(".example.com", "X")])
 
     assert read_firefox_cookie(_source(db), "acme.my.salesforce.com", "sid") is None
+
+
+def test_lists_only_salesforce_sids(tmp_path):
+    db = tmp_path / "cookies.sqlite"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE moz_cookies (host TEXT, name TEXT, value TEXT)")
+    con.executemany(
+        "INSERT INTO moz_cookies (host, name, value) VALUES (?, ?, ?)",
+        [
+            (".acme.my.salesforce.com", "sid", "MYSID"),
+            (".example.com", "sid", "NOPE"),
+            (".acme.my.salesforce.com", "other", "x"),
+        ],
+    )
+    con.commit()
+    con.close()
+
+    result = list_salesforce_sids(_source(db))
+
+    assert result == [(".acme.my.salesforce.com", "MYSID")]

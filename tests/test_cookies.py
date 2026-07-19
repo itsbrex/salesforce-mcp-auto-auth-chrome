@@ -50,12 +50,3 @@ def test_skips_sources_that_raise(monkeypatch):
 def test_returns_none_for_bad_url(monkeypatch):
     monkeypatch.setattr(cookies, "discover_sources", lambda b, p: [])
     assert cookies.read_sid("not-a-url") is None
-
-
-def test_parse_env_reads_lists():
-    env = {"SALESFORCE_BROWSERS": "comet, chrome", "SALESFORCE_PROFILES": "Default"}
-    assert cookies.parse_env(env) == (["comet", "chrome"], ["Default"])
-
-
-def test_parse_env_empty_returns_none():
-    assert cookies.parse_env({}) == (None, None)

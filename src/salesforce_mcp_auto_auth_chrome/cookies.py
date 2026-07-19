@@ -5,57 +5,20 @@
 
 Iterates discovered cookie sources in priority order and returns the first
 non-empty ``sid`` cookie matching the instance host. Reading never raises:
-any per-source failure is logged and skipped.
+any per-source failure is logged and skipped. Choosing *which* org to bind and
+validating a session live in ``orgs.py``, which builds on this module.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
-from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from .browsers import CookieSource, discover_sources, reader_for
-from .instance import normalize_instance_url
-from .validate import session_is_valid
 
 log = logging.getLogger(__name__)
 
-__all__ = [
-    "OrgCandidate",
-    "ResolvedSession",
-    "read_sid",
-    "read_sid_with_source",
-    "discover_orgs",
-    "resolve_session",
-    "parse_env",
-]
-
-
-@dataclass(frozen=True)
-class OrgCandidate:
-    """A discovered Salesforce session: a My Domain REST URL + its sid."""
-
-    instance_url: str
-    sid: str
-    browser: str
-    profile: str
-
-
-@dataclass(frozen=True)
-class ResolvedSession:
-    """The org bound at startup, plus the source to pin per-call refresh to.
-
-    ``browser``/``profile`` identify the exact cookie store the initial sid came
-    from, so the per-call refresh can keep reading from the *same* profile
-    instead of drifting to another profile that happens to hold a stale sid for
-    the same host.
-    """
-
-    instance_url: str | None
-    sid: str | None
-    browser: str | None = None
-    profile: str | None = None
+__all__ = ["read_sid", "read_sid_with_source"]
 
 
 def read_sid(
@@ -114,112 +77,3 @@ def read_sid_with_source(
 
 def _read_from_source(source: CookieSource, host: str) -> str | None:
     return reader_for(source.family).read(source, host, "sid")
-
-
-def _list_sids_from_source(source: CookieSource) -> list[tuple[str, str]]:
-    return reader_for(source.family).list_sids(source)
-
-
-def discover_orgs(
-    browsers: list[str] | None = None,
-    profiles: list[str] | None = None,
-) -> list[OrgCandidate]:
-    """Scan all cookie sources for logged-in Salesforce orgs.
-
-    Each Salesforce ``sid`` cookie is mapped to its My Domain REST URL. Returns
-    deduped candidates in priority order, with sids whose cookie was already set
-    on a ``my.salesforce.com`` host ranked ahead of Lightning-derived ones (the
-    latter carry a different sid that the REST API rejects).
-    """
-    primary: list[OrgCandidate] = []
-    derived: list[OrgCandidate] = []
-    seen: set[tuple[str, str]] = set()
-    for source in discover_sources(browsers, profiles):
-        try:
-            pairs = _list_sids_from_source(source)
-        except Exception as e:  # noqa: BLE001
-            log.warning(
-                "listing sids failed for %s/%s: %s: %s",
-                source.browser,
-                source.profile,
-                type(e).__name__,
-                e,
-            )
-            continue
-        for host_key, sid in pairs:
-            instance_url = normalize_instance_url(host_key)
-            if not instance_url:
-                continue
-            host = instance_url[len("https://") :]
-            if not host.endswith("salesforce.com"):
-                continue  # Lightning/VF hosts that didn't map to a My Domain
-            key = (instance_url, sid)
-            if key in seen:
-                continue
-            seen.add(key)
-            candidate = OrgCandidate(instance_url, sid, source.browser, source.profile)
-            bare = host_key.lstrip(".").lower()
-            (primary if bare.endswith("salesforce.com") else derived).append(candidate)
-    return primary + derived
-
-
-def resolve_session(
-    configured_url: str | None,
-    browsers: list[str] | None = None,
-    profiles: list[str] | None = None,
-) -> ResolvedSession:
-    """Resolve the org to bind to, an initial ``sid``, and the source to pin.
-
-    Strategy:
-
-    1. If ``configured_url`` is set, normalize it to My Domain and try to read a
-       ``sid`` for it directly (trusted — no network probe), recording which
-       browser/profile it came from.
-    2. Otherwise (or if step 1 found no sid), auto-discover orgs from cookies and
-       return the first whose sid validates against the REST API.
-    3. If nothing validates, return the normalized configured URL (if any) with
-       a ``None`` sid so the error surfaces at tool-call time.
-    """
-    normalized = normalize_instance_url(configured_url) if configured_url else None
-    if normalized:
-        found = read_sid_with_source(normalized, browsers, profiles)
-        if found:
-            sid, browser, profile = found
-            return ResolvedSession(normalized, sid, browser, profile)
-
-    for candidate in discover_orgs(browsers, profiles):
-        if session_is_valid(candidate.instance_url, candidate.sid):
-            log.info(
-                "auto-discovered org %s via %s/%s",
-                candidate.instance_url,
-                candidate.browser,
-                candidate.profile,
-            )
-            return ResolvedSession(
-                candidate.instance_url,
-                candidate.sid,
-                candidate.browser,
-                candidate.profile,
-            )
-
-    return ResolvedSession(normalized, None, None, None)
-
-
-def parse_env(
-    environ: Mapping[str, str],
-) -> tuple[list[str] | None, list[str] | None]:
-    """Parse ``SALESFORCE_BROWSERS`` / ``SALESFORCE_PROFILES`` env vars.
-
-    Each is a comma-separated list. Returns ``(browsers, profiles)`` where each
-    element is a list (order preserved) or ``None`` when unset/empty.
-    """
-    return _split(environ.get("SALESFORCE_BROWSERS")), _split(
-        environ.get("SALESFORCE_PROFILES")
-    )
-
-
-def _split(value: str | None) -> list[str] | None:
-    if not value:
-        return None
-    items = [part.strip() for part in value.split(",") if part.strip()]
-    return items or None

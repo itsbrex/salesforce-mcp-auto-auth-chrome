@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from collections.abc import Mapping
 from typing import cast
 
 from . import __version__
-from .cookies import parse_env, resolve_session
+from .orgs import resolve_session
 from .patch import PENDING_LOGIN_SENTINEL
 from .patch import install as install_patch
 
@@ -20,6 +21,26 @@ _OAUTH_ENV_VARS = (
     "SALESFORCE_CLIENT_SECRET",
     "SALESFORCE_DOMAIN",
 )
+
+
+def parse_env(
+    environ: Mapping[str, str],
+) -> tuple[list[str] | None, list[str] | None]:
+    """Parse ``SALESFORCE_BROWSERS`` / ``SALESFORCE_PROFILES`` env vars.
+
+    Each is a comma-separated list. Returns ``(browsers, profiles)`` where each
+    element is a list (order preserved) or ``None`` when unset/empty.
+    """
+    return _split(environ.get("SALESFORCE_BROWSERS")), _split(
+        environ.get("SALESFORCE_PROFILES")
+    )
+
+
+def _split(value: str | None) -> list[str] | None:
+    if not value:
+        return None
+    items = [part.strip() for part in value.split(",") if part.strip()]
+    return items or None
 
 
 def main() -> int:
