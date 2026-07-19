@@ -30,17 +30,20 @@ The package is a thin Python shim around `mcp-salesforce-connector`. On every AP
 
 ### Source (`src/salesforce_mcp_auto_auth_chrome/`)
 
-- **`__main__.py`** — entry point. Reads `SALESFORCE_INSTANCE_URL` from env (optional), resolves the org via `cookies.resolve_session`, installs the per-call patch, and hands off to `mcp-salesforce-connector`.
+- **`__main__.py`** — entry point. Reads `SALESFORCE_INSTANCE_URL` from env (optional), parses `SALESFORCE_BROWSERS` / `SALESFORCE_PROFILES` (`parse_env`), resolves the org via `orgs.resolve_session`, installs the per-call patch, and hands off to `mcp-salesforce-connector`.
 - **`patch.py`** — monkey-patches `simple_salesforce.Salesforce._call_salesforce` so every API call gets a fresh `sid`. Includes upstream-signature self-check and 401/expired-session retry.
-- **`auth.py`** — re-exports `read_sid` from `cookies.py`; provides a `read_sid_from_chrome` back-compat shim. Returns `None` on any failure so callers can defer the error to tool-call time.
-- **`cookies.py`** — multi-source `read_sid` orchestrator. Walks the browser registry, dispatches to per-family readers, returns the first valid `sid`. Also handles env-var parsing (`SALESFORCE_BROWSERS`, `SALESFORCE_PROFILES`) and org auto-discovery with REST validation.
-- **`browsers.py`** — priority-ordered registry of supported browsers (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari) with macOS data dirs, Keychain service names, and profile discovery.
-- **`chromium.py`** — reads and decrypts Chromium-family cookies (AES-128-CBC via `cryptography`, key from macOS Keychain).
-- **`firefox.py`** — reads Firefox cookies from unencrypted SQLite (`moz_cookies`).
-- **`safari.py`** — parses Safari's binary `Cookies.binarycookies` format (requires Full Disk Access).
+- **`models.py`** — leaf data types shared across the readers: `BrowserConfig`, `CookieSource`, and the `CookieReader` interface. Standard library only, so it breaks the registry ↔ reader import cycle.
+- **`cookies.py`** — sid reading. Walks the browser registry and returns the first valid `sid` for a host (`read_sid` / `read_sid_with_source`). Never raises — failures return `None` so callers defer the error to tool-call time.
+- **`orgs.py`** — org resolution. Auto-discovers logged-in orgs (`discover_orgs`), applies the My-Domain-over-Lightning ranking rule, and picks the session to bind (`resolve_session`) with REST validation.
+- **`auth.py`** — deprecated back-compat surface: re-exports `read_sid` and provides the `read_sid_from_chrome` shim. Nothing in the package imports it anymore; slated for removal at 0.2.0.
+- **`browsers.py`** — priority-ordered registry of supported browsers (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari) plus the `READERS` dispatch table and `discover_sources`. Callers dispatch through the reader interface, never a `family` switch.
+- **`chromium.py`** — `CookieReader` for Chromium-family browsers: profile discovery plus decryption (AES-128-CBC via `cryptography`, key from macOS Keychain).
+- **`firefox.py`** — `CookieReader` for Firefox: profile discovery plus unencrypted SQLite reads (`moz_cookies`).
+- **`safari.py`** — `CookieReader` for Safari: parses the binary `Cookies.binarycookies` format (requires Full Disk Access).
 - **`instance.py`** — normalizes Lightning URLs (`*.lightning.force.com`) to My Domain (`*.my.salesforce.com`).
+- **`useragent.py`** — resolves a browser-matching `User-Agent` for outgoing API calls (env override → live DevTools probe → pinned fallback).
 - **`validate.py`** — validates a candidate `sid` against the Salesforce REST API (`/services/oauth2/userinfo`).
-- **`utils.py`** — shared helpers: longest-suffix host matching and the temp-copy SQLite cookie query used by the Chromium/Firefox readers.
+- **`utils.py`** — shared reader helpers: longest-suffix host matching and the temp-copy SQLite cookie query used by the Chromium/Firefox readers.
 
 ### Other
 
