@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from typing import cast
 
 from . import __version__
-from .browsers import BROWSERS
+from .browsers import default_browsers
 from .orgs import resolve_session
 from .patch import PENDING_LOGIN_SENTINEL
 from .patch import install as install_patch
@@ -32,21 +32,23 @@ def parse_env(
     Three comma-separated lists control which cookie stores are scanned:
 
     - ``SALESFORCE_BROWSERS`` — allowlist of browser keys, in priority order.
+      Naming an opt-in browser here (e.g. ``firefox``) is how you enable it.
     - ``SALESFORCE_SKIP_BROWSERS`` — denylist of browser keys to exclude (applied
-      after the allowlist; e.g. ``firefox`` to skip probing Firefox entirely).
+      after the allowlist; e.g. ``safari`` to skip probing Safari entirely).
     - ``SALESFORCE_PROFILES`` — profile names to restrict to.
 
-    Returns ``(browsers, profiles)``. ``browsers`` is ``None`` (meaning "all
-    registered browsers") only when neither the allowlist nor the denylist is
-    set; once a denylist is applied it becomes an explicit list (possibly empty,
-    meaning "scan nothing").
+    Returns ``(browsers, profiles)``. ``browsers`` is ``None`` (meaning "the
+    default scan set" — every registered browser except opt-in ones like
+    Firefox) only when neither the allowlist nor the denylist is set; once a
+    denylist is applied it becomes an explicit list (possibly empty, meaning
+    "scan nothing"), computed against the default scan set.
     """
     browsers = _split(environ.get("SALESFORCE_BROWSERS"))
     profiles = _split(environ.get("SALESFORCE_PROFILES"))
     skip = _split(environ.get("SALESFORCE_SKIP_BROWSERS"))
     if skip:
         excluded = {s.lower() for s in skip}
-        base = browsers if browsers is not None else [cfg.key for cfg in BROWSERS]
+        base = browsers if browsers is not None else default_browsers()
         browsers = [b for b in base if b.lower() not in excluded]
     return browsers, profiles
 

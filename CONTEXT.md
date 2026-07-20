@@ -42,6 +42,13 @@ which selects the decryption/parsing strategy. Historically a stringly-typed
 `family` tag matched in several switch statements; the target shape is one
 **cookie reader** adapter per family (see below).
 
+### Opt-in browser
+A registered browser excluded from the default scan (`OPT_IN_BROWSERS` in
+`browsers.py`), reached only when named explicitly in `SALESFORCE_BROWSERS`.
+Firefox is the sole opt-in browser: its store is often an empty/legacy profile
+that adds noise, so `discover_sources(None)` skips it and `default_browsers()`
+omits it.
+
 ### Cookie reader
 The **adapter** that owns everything a browser family knows how to do: discover
 its profiles, read one cookie for a host, and list all Salesforce `sid` cookies

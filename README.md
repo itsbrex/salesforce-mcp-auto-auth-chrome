@@ -281,12 +281,12 @@ Every API call. The `sid` from Chrome is read fresh each time — Salesforce ses
 
 **`HTTP 401` from Salesforce on every call**: The `sid` cookie you have is valid for the UI session but the org may have "Lock sessions to the IP address from which they originated" enabled with a strict policy. If so, switch that org to OAuth-based auth via the standard `mcp-salesforce-connector` config.
 
-**Want to use a browser other than Chrome**: Supported out of the box. The wrapper scans Chrome, Comet, Arc, Edge, Brave, Firefox, and Safari — and every profile in each — and uses the first org session it finds. No config needed.
+**Want to use a browser other than Chrome**: Supported out of the box. By default the wrapper scans Chrome, Comet, Arc, Edge, Brave, and Safari — and every profile in each — and uses the first org session it finds. No config needed. **Firefox is opt-in**: it's excluded from the default scan; enable it by naming `firefox` in `SALESFORCE_BROWSERS`.
 
 Restrict or reorder the search with optional env vars in your Claude Desktop config:
 
-- `SALESFORCE_BROWSERS` — comma-separated browser keys, in priority order. Keys: `chrome`, `comet`, `arc`, `edge`, `brave`, `firefox`, `safari`. Example: `"SALESFORCE_BROWSERS": "comet, chrome"`.
-- `SALESFORCE_SKIP_BROWSERS` — comma-separated browser keys to exclude, applied after the allowlist. Use it to skip probing a browser without listing every other one — e.g. `"SALESFORCE_SKIP_BROWSERS": "firefox"` scans every supported browser except Firefox.
+- `SALESFORCE_BROWSERS` — comma-separated browser keys, in priority order. Keys: `chrome`, `comet`, `arc`, `edge`, `brave`, `firefox`, `safari`. Example: `"SALESFORCE_BROWSERS": "comet, chrome"`. This is also how you opt into Firefox — e.g. `"SALESFORCE_BROWSERS": "firefox, chrome"`.
+- `SALESFORCE_SKIP_BROWSERS` — comma-separated browser keys to exclude, applied after the allowlist. Use it to skip probing a browser without listing every other one — e.g. `"SALESFORCE_SKIP_BROWSERS": "safari"` scans every default browser except Safari.
 - `SALESFORCE_PROFILES` — comma-separated profile names to limit to (e.g. `"Default, Profile 1"`). Applies across all selected browsers.
 
 **Safari note**: reading Safari cookies requires **Full Disk Access** for the app that launches the MCP server (Claude Desktop or your terminal). Grant it in System Settings → Privacy & Security → Full Disk Access. Without it, Safari is silently skipped and other browsers are still used.

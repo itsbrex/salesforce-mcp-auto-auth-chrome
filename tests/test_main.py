@@ -171,3 +171,18 @@ def test_parse_env_skip_all_scans_nothing():
     all_keys = ",".join(cfg.key for cfg in BROWSERS)
     browsers, _ = entry.parse_env({"SALESFORCE_SKIP_BROWSERS": all_keys})
     assert browsers == []
+
+
+def test_parse_env_skip_base_excludes_opt_in_firefox():
+    # Applying a denylist expands the default scan set, which omits Firefox.
+    browsers, _ = entry.parse_env({"SALESFORCE_SKIP_BROWSERS": "safari"})
+    assert browsers is not None
+    assert "firefox" not in browsers
+    assert "safari" not in browsers
+    assert "chrome" in browsers
+
+
+def test_parse_env_firefox_opt_in_via_allowlist():
+    # Naming Firefox explicitly is the opt-in; parse_env passes it through.
+    browsers, _ = entry.parse_env({"SALESFORCE_BROWSERS": "firefox, chrome"})
+    assert browsers == ["firefox", "chrome"]

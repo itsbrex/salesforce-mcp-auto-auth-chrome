@@ -25,9 +25,16 @@ __all__ = [
     "CookieReader",
     "CookieSource",
     "READERS",
+    "OPT_IN_BROWSERS",
+    "default_browsers",
     "reader_for",
     "discover_sources",
 ]
+
+# Browsers excluded from the default scan — reached only when named explicitly
+# (via SALESFORCE_BROWSERS). Firefox is opt-in: its cookie store is often an
+# empty/legacy profile that just adds noise, so we don't probe it unasked.
+OPT_IN_BROWSERS: frozenset[str] = frozenset({"firefox"})
 
 _HOME = Path.home()
 _APP_SUPPORT = _HOME / "Library" / "Application Support"
@@ -102,6 +109,12 @@ def reader_for(family: str) -> CookieReader:
     return READERS[family]
 
 
+def default_browsers() -> list[str]:
+    """Browser keys scanned by default — every registered browser except the
+    opt-in ones (see ``OPT_IN_BROWSERS``), in registry priority order."""
+    return [cfg.key for cfg in BROWSERS if cfg.key not in OPT_IN_BROWSERS]
+
+
 def discover_sources(
     browsers: list[str] | None = None,
     profiles: list[str] | None = None,
@@ -110,7 +123,9 @@ def discover_sources(
 
     Args:
         browsers: Optional lowercase browser keys to restrict to, in priority
-            order. ``None`` means all registered browsers in registry order.
+            order. ``None`` means the default scan set — every registered
+            browser except the opt-in ones (``OPT_IN_BROWSERS``, e.g. Firefox).
+            Naming an opt-in browser explicitly here includes it.
         profiles: Optional profile names to restrict to (case-insensitive).
             ``None`` means all discovered profiles.
 
@@ -122,7 +137,7 @@ def discover_sources(
         by_key = {cfg.key: cfg for cfg in BROWSERS}
         configs = [by_key[k] for k in wanted if k in by_key]
     else:
-        configs = list(BROWSERS)
+        configs = [cfg for cfg in BROWSERS if cfg.key not in OPT_IN_BROWSERS]
 
     profile_filter = {p.lower() for p in profiles} if profiles else None
 

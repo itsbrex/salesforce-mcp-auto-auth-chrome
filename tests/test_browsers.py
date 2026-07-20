@@ -6,7 +6,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from salesforce_mcp_auto_auth_chrome import browsers
-from salesforce_mcp_auto_auth_chrome.browsers import BrowserConfig, discover_sources
+from salesforce_mcp_auto_auth_chrome.browsers import (
+    BrowserConfig,
+    default_browsers,
+    discover_sources,
+)
 
 
 def _fake_chromium(tmp_path: Path) -> BrowserConfig:
@@ -15,6 +19,13 @@ def _fake_chromium(tmp_path: Path) -> BrowserConfig:
         (base / name).mkdir(parents=True)
         (base / name / "Cookies").write_bytes(b"")
     return BrowserConfig("chrome", "chromium", base, "Chrome Safe Storage", "Chrome")
+
+
+def _fake_firefox(tmp_path: Path) -> BrowserConfig:
+    base = tmp_path / "Firefox"
+    (base / "abc.default").mkdir(parents=True)
+    (base / "abc.default" / "cookies.sqlite").write_bytes(b"")
+    return BrowserConfig("firefox", "firefox", base)
 
 
 def test_discover_enumerates_chromium_profiles_excluding_system(tmp_path, monkeypatch):
@@ -58,3 +69,26 @@ def test_discover_skips_missing_base_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(browsers, "BROWSERS", (cfg,))
 
     assert discover_sources() == []
+
+
+def test_default_scan_excludes_opt_in_firefox(tmp_path, monkeypatch):
+    chrome = _fake_chromium(tmp_path)
+    firefox = _fake_firefox(tmp_path)
+    monkeypatch.setattr(browsers, "BROWSERS", (chrome, firefox))
+
+    # Default (browsers=None) skips the opt-in Firefox entirely.
+    sources = discover_sources()
+
+    assert {s.browser for s in sources} == {"chrome"}
+    assert "firefox" not in default_browsers()
+
+
+def test_firefox_included_when_named_explicitly(tmp_path, monkeypatch):
+    chrome = _fake_chromium(tmp_path)
+    firefox = _fake_firefox(tmp_path)
+    monkeypatch.setattr(browsers, "BROWSERS", (chrome, firefox))
+
+    # Opt in by naming it — explicit allowlist overrides the opt-in default.
+    sources = discover_sources(browsers=["firefox"])
+
+    assert {s.browser for s in sources} == {"firefox"}
