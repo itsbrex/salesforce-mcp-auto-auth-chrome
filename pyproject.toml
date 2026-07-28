@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "salesforce-mcp-auto-auth-chrome"
-version = "0.1.0"
+version = "0.1.1"
 description = "Drop-in wrapper for mcp-salesforce-connector that auto-refreshes the Salesforce session from your Chrome browser — no more pasting tokens."
 readme = "README.md"
 license = { text = "MIT" }
@@ -35,6 +35,11 @@ dependencies = [
     "mcp-salesforce-connector>=0.1.15",
     "pycookiecheat>=0.7",
     "simple-salesforce>=1.12",
+    # Pin mcp SDK below 2.0 — upstream mcp-salesforce-connector 0.1.15 uses
+    # the low-level Server.list_tools() decorator API that was removed in
+    # mcp 2.0.0 (Jul 2026). Until the connector is ported to the 2.x API,
+    # this pin prevents the AttributeError crash at import time.
+    "mcp>=1.0,<2.0",
 ]
 
 [project.urls]
