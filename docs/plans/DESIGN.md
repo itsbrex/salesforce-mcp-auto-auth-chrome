@@ -45,17 +45,43 @@ Each page defines `PLAN_ITEMS`, an array of decision items:
   title: "One-line statement of the decision",
   why: "Rationale / consequence the reader needs to judge it",
   current: "Status quo (omit or \"\" when N/A)",
-  suggested: "Proposed change — double-click-editable by the reader" }
+  suggested: "Proposed change — editable by the reader",
+  dflt: "approved" }    // OPTIONAL pre-selected state: "approved"|"rejected";
+                        // seeded once — a saved reader decision always wins
 ```
 
-Reader affordances (already wired in the template — do not remove):
+Reader affordances (v11, already wired in the template — do not remove):
 
-- ✓ Approve / ✗ Reject toggles per item, tri-state with pending.
-- Double-click the suggested text → textarea; Esc cancels, blur saves; edited
-  items get an `edited` badge and a revert button.
-- All decisions persist to `localStorage` (`plans:<slug>:<seq>`).
-- Filter chips (All / per-group / Pending only), expand/collapse all,
-  stat tiles, toast confirmations.
+- **Two views.** Overview (thesis, prose context, stat tiles, grouped one-line
+  rows) and a typeform-style **focus mode** — one decision at a time, centered
+  card, direction-aware slide between cards. `Enter` on the overview starts at
+  the first pending item; `O`/`Esc` toggles back.
+- **Keyboard-first.** `↓/J` next · `↑/K` prev · `A` approve · `R`/`X` reject ·
+  `E` edit (⌘↵ save, Esc cancel) · `U` revert edit · `P`/`⇧P` next/prev
+  pending · `Home`/`End` · `S`/`⌘↵` submit · `?` help overlay. Approve/reject
+  **auto-advance** (~260 ms after visual feedback); pressing the same key again
+  clears back to pending and never advances. Editing never auto-advances.
+- **Submit validation + review mode.** Submit with undecided items opens a
+  confirm dialog listing them; "Review them" enters review mode, where
+  navigation cycles ONLY the pending items (progress track dims the decided
+  ones) until they're resolved — or "Submit anyway" sends them as `pending`
+  (Claude skips those). With zero pending, a normal confirm dialog submits.
+- **Color coding.** Per-repo accent = approve/identity; danger = reject;
+  warn = edited/pending-attention. Each group gets a stable hue from the
+  curated pool (skipping hues within Δ28° of the accent) shown on group chips,
+  card left borders, and row stripes. Kind chips: edit=accent,
+  structural=azure, verify=mint, note=amber.
+- **Progress.** Segmented track under the toolbar (one clickable segment per
+  item, colored by state, gaps between groups, focus ring on the current one),
+  `n / N` position on every card, live ✓/✗/○ counts in the toolbar (○ jumps
+  into review mode).
+- **Persistence.** Decisions in `localStorage` (`plans:<slug>:<seq>`), reading
+  position + view in `plans:<slug>:<seq>:ui` — reopening resumes where you
+  left off. `dflt` seeding runs once and never overwrites a saved decision.
+- **Accessibility.** `aria-live` announcer for card changes and submit
+  results, real buttons with `aria-pressed`/labels everywhere, dialogs with
+  `role=dialog aria-modal`, skip link, visible focus rings,
+  `prefers-reduced-motion` kills all animation.
 - **Submit to Claude** POSTs the full decision payload to
   `http://127.0.0.1:47613/submit`; when the listener is offline it downloads
   `<slug>-decisions.json` instead. A status dot pings `/ping` every 5s.
@@ -152,23 +178,38 @@ Content `max-width:1100px` (dashboard 900px). Sticky toolbar solid `--surface-2`
 
 ## Components
 
-- **Toolbar** (sticky): listener status dot + live counts + expand/collapse +
-  primary Submit button.
+- **Toolbar** (sticky): seq pill + title, listener status dot, live ✓/✗/○
+  count buttons (○ enters review mode), Overview toggle, primary Submit.
+- **Progress track** (sticky, under toolbar): one segment per item, colored by
+  state (accent/danger/neutral), group gaps, click-to-jump, focus ring on the
+  current item; review mode dims decided segments.
+- **Focus card**: group chip (group hue) + kind chip (kind hue) + state badge +
+  `id · n / N` position; title → why → current (danger-striped) → suggested
+  (accent-striped, editable) → approve/reject/edit/revert + prev/next. Card
+  border and tint follow the decision state; keycap hints (`<kbd>`) on actions.
+- **Overview rows**: grouped one-line buttons (state dot + id + title + badge)
+  with group-hue left stripe; All / Pending-only filter chips; Enter/click
+  opens focus mode at that item.
+- **Review banner** (sticky, warn-tinted): undecided count + exit; shown only
+  in review mode.
+- **Dialogs**: shortcut help (`?`) and submit confirm (stats, undecided list,
+  Review-them / Submit-anyway / Cancel) — `role=dialog aria-modal`,
+  Esc closes, Enter fires the primary.
+- **Shortcut footer** (fixed, desktop only): the whole key map at a glance.
 - **Meta strip**: seq pill + date + repo + source — provenance at a glance.
-- **Stat tiles**: `repeat(auto-fit, minmax(140px,1fr))` — decisions/approved/
-  rejected/pending, mono numerals.
-- **Decision card**: `<details open>` with dot + title + state badge + chevron;
-  body = why → current (danger-striped) → suggested (accent-striped, editable)
-  → approve/reject/revert row.
-- **Filter chips**: single-select `aria-pressed`, All / groups / Pending only.
-- **Prose sections**: optional free-form context blocks above the groups.
-- **Toast**: `aria-live=polite`, auto-dismiss.
+- **Stat tiles**: decisions/approved/rejected/pending, mono numerals, colored.
+- **Prose sections**: optional free-form context blocks in the overview.
+- **Toast** + **aria-live announcer**: visible + screen-reader feedback for
+  every action.
 - States everywhere: default, hover, focus-visible, active, edited, empty.
 
 ## Motion
 
-150–250ms ease-out: chevron rotate, hover lift, chip select, toast slide. No
-page-load choreography. `@media (prefers-reduced-motion: reduce)` → instant.
+150–260ms ease-out: card slide (direction-aware `translateY` + fade on
+navigate), state-badge pop on decide, hover lift, chip select, toast slide,
+progress-segment scale on hover. Auto-advance waits ~260ms so the state
+change is seen before the next card slides in. No page-load choreography.
+`@media (prefers-reduced-motion: reduce)` → instant everything.
 
 ## Self-contained rule
 
