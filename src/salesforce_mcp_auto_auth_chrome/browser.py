@@ -100,6 +100,55 @@ class SalesforceBrowser:
             "recent": validate_activity_payload(history_payload, "history"),
         }
 
+    def get_accounts_context(
+        self, account_ids: list[str], *, limit: int = 25
+    ) -> list[dict[str, Any]]:
+        """Return pipeline and activities for up to ten Accounts in one tab."""
+        if not isinstance(account_ids, list) or not 1 <= len(account_ids) <= 10:
+            raise ValueError("account_ids must contain 1 through 10 Account IDs")
+        parsed_ids = [
+            validate_salesforce_id(value, "001", field_name="account_id")
+            for value in account_ids
+        ]
+        if len(set(parsed_ids)) != len(parsed_ids):
+            raise ValueError("account_ids must be unique")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 25:
+            raise ValueError("limit must be an integer from 1 through 25")
+
+        with self._managed_session() as (profile, session):
+            pipeline_by_account = self._account_pipeline_batch(
+                profile, session, parsed_ids
+            )
+            contexts: list[dict[str, Any]] = []
+            for account_id in parsed_ids:
+                open_payload = self._related_list(
+                    profile,
+                    session,
+                    account_id,
+                    "OpenActivities",
+                    _OPEN_ACTIVITY_JS,
+                    limit,
+                )
+                history_payload = self._related_list(
+                    profile,
+                    session,
+                    account_id,
+                    "ActivityHistories",
+                    _ACTIVITY_HISTORY_JS,
+                    limit,
+                )
+                contexts.append(
+                    {
+                        "accountId": account_id,
+                        "opportunities": pipeline_by_account[account_id],
+                        "upcoming": validate_activity_payload(open_payload, "open"),
+                        "recent": validate_activity_payload(
+                            history_payload, "history"
+                        ),
+                    }
+                )
+        return contexts
+
     @contextmanager
     def _managed_session(self) -> Iterator[tuple[str, str]]:
         profile = self._resolve_opencli_profile()
@@ -193,6 +242,35 @@ class SalesforceBrowser:
         self._command(profile, session, ["open", url], timeout=45)
         expression = script.replace("__LIMIT__", str(limit))
         return self._eval(profile, session, expression)
+
+    def _account_pipeline_batch(
+        self, profile: str, session: str, account_ids: list[str]
+    ) -> dict[str, list[dict[str, Any]]]:
+        script = _PIPELINE_BATCH_JS.replace(
+            "__ACCOUNT_IDS__", json.dumps(account_ids, separators=(",", ":"))
+        )
+        payload = self._eval(profile, session, script)
+        if not isinstance(payload, list) or len(payload) != len(account_ids):
+            raise RuntimeError(
+                "Salesforce browser contract drift: batch pipeline count changed"
+            )
+        pipelines: dict[str, list[dict[str, Any]]] = {}
+        for expected_account_id, item in zip(account_ids, payload, strict=True):
+            if (
+                not isinstance(item, dict)
+                or set(item) != {"accountId", "pipeline"}
+                or item.get("accountId") != expected_account_id
+            ):
+                raise RuntimeError(
+                    "Salesforce browser contract drift: batch pipeline shape changed"
+                )
+            records = validate_pipeline_payload(item["pipeline"])
+            if any(record["accountId"] != expected_account_id for record in records):
+                raise RuntimeError(
+                    "Salesforce browser contract drift: batch account changed"
+                )
+            pipelines[expected_account_id] = records
+        return pipelines
 
     def _eval(self, profile: str, session: str, script: str) -> object:
         return self._command(profile, session, ["eval", script], timeout=35)
@@ -316,6 +394,37 @@ _PIPELINE_JS = f"""
       type:record.fields?.Type?.displayValue||record.fields?.Type?.value||''
     }}))
   }};
+}})()
+""".strip()
+
+_PIPELINE_BATCH_JS = f"""
+(async()=>{{
+  const accountIds=__ACCOUNT_IDS__;
+  const fields=['Opportunity.Id','Opportunity.Name','Opportunity.StageName','Opportunity.CloseDate','Opportunity.Owner.Name','Opportunity.Amount','Opportunity.ExpectedRevenue','Opportunity.Probability','Opportunity.Type','Opportunity.AccountId'].join(',');
+  return await Promise.all(accountIds.map(async accountId=>{{
+    const path='/services/data/{API_VERSION}/ui-api/related-list-records/'+accountId+'/Opportunities?fields='+encodeURIComponent(fields)+'&pageSize=200';
+    const response=await fetch(path,{{
+      headers:{{Accept:'application/json'}},credentials:'same-origin'
+    }});
+    if(!response.ok)return {{accountId,pipeline:{{error:'request_failed',status:response.status}}}};
+    const payload=await response.json();
+    return {{accountId,pipeline:{{
+      sourceKeys:Object.keys(payload).sort(),
+      done:payload.nextPageToken==null,totalSize:payload.count,
+      records:(payload.records||[]).map(record=>({{
+        id:record.id||record.fields?.Id?.value||'',
+        accountId:record.fields?.AccountId?.value||'',
+        name:record.fields?.Name?.displayValue||record.fields?.Name?.value||'',
+        stage:record.fields?.StageName?.displayValue||record.fields?.StageName?.value||'',
+        closeDate:record.fields?.CloseDate?.value||record.fields?.CloseDate?.displayValue||'',
+        owner:record.fields?.Owner?.displayValue||'',
+        amount:record.fields?.Amount?.value,
+        expectedRevenue:record.fields?.ExpectedRevenue?.value,
+        probability:record.fields?.Probability?.value,
+        type:record.fields?.Type?.displayValue||record.fields?.Type?.value||''
+      }}))
+    }}}};
+  }}));
 }})()
 """.strip()
 

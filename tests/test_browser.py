@@ -18,9 +18,11 @@ class FakeRunner:
         *,
         browser_user_id: str = "005000000000000AAA",
         profile_output: str = "  comet-live comet - connected v1.0.22\n",
+        fail_on_history: bool = False,
     ) -> None:
         self.browser_user_id = browser_user_id
         self.profile_output = profile_output
+        self.fail_on_history = fail_on_history
         self.calls: list[list[str]] = []
 
     def __call__(self, args: Sequence[str], timeout: float) -> str:
@@ -40,6 +42,40 @@ class FakeRunner:
                     "host": "acme.lightning.force.com",
                     "userId": self.browser_user_id,
                 }
+            )
+        if "const accountIds=" in joined and "ui-api/related-list-records" in joined:
+            return json.dumps(
+                [
+                    {
+                        "accountId": account_id,
+                        "pipeline": {
+                            "done": True,
+                            "sourceKeys": ["count", "nextPageToken", "records"],
+                            "totalSize": 1,
+                            "records": [
+                                {
+                                    "id": opportunity_id,
+                                    "accountId": account_id,
+                                    "name": f"Example {index}",
+                                    "stage": "Qualification",
+                                    "closeDate": "2026-12-01",
+                                    "owner": "Owner",
+                                    "amount": 125000,
+                                    "expectedRevenue": 50000,
+                                    "probability": 40,
+                                    "type": "New Business",
+                                }
+                            ],
+                        },
+                    }
+                    for index, (account_id, opportunity_id) in enumerate(
+                        [
+                            ("001000000000000AAA", "006000000000000AAA"),
+                            ("001000000000001AAA", "006000000000001AAA"),
+                        ],
+                        start=1,
+                    )
+                ]
             )
         if "ui-api/related-list-records" in joined:
             return json.dumps(
@@ -79,6 +115,8 @@ class FakeRunner:
                 }
             )
         if "ActivityHistories" in joined and "eval" in call:
+            if self.fail_on_history:
+                raise BrowserBridgeError("synthetic history failure")
             return json.dumps(
                 {
                     "empty": False,
@@ -193,6 +231,60 @@ def test_account_activities_return_only_typed_dashboard_fields() -> None:
             {"subject": "Call", "date": "8/1/2026", "assignee": "Owner"}
         ],
     }
+
+
+def test_account_context_batch_reuses_one_managed_session() -> None:
+    runner = FakeRunner()
+
+    result = _browser(runner).get_accounts_context(
+        ["001000000000000AAA", "001000000000001AAA"], limit=10
+    )
+
+    assert [context["accountId"] for context in result] == [
+        "001000000000000AAA",
+        "001000000000001AAA",
+    ]
+    assert [context["opportunities"][0]["accountId"] for context in result] == [
+        "001000000000000AAA",
+        "001000000000001AAA",
+    ]
+    command_text = [" ".join(call) for call in runner.calls]
+    assert sum(" --window background" in command for command in command_text) == 1
+    assert sum("chatter/users/me" in command for command in command_text) == 1
+    assert sum("const accountIds=" in command for command in command_text) == 1
+    assert sum(call[-1:] == ["close"] for call in runner.calls) == 1
+    assert "SID-SECRET" not in "\n".join(command_text)
+
+
+def test_account_context_batch_closes_session_on_activity_failure() -> None:
+    runner = FakeRunner(fail_on_history=True)
+
+    with pytest.raises(BrowserBridgeError, match="synthetic history failure"):
+        _browser(runner).get_accounts_context(
+            ["001000000000000AAA", "001000000000001AAA"], limit=10
+        )
+
+    assert sum(call[-1:] == ["close"] for call in runner.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "account_ids",
+    [
+        [],
+        ["001000000000000AAA", "001000000000000AAA"],
+        ["001000000000000AAA"] * 11,
+        ["not-an-account"],
+    ],
+)
+def test_account_context_batch_rejects_invalid_input_before_browser(
+    account_ids: list[str],
+) -> None:
+    runner = FakeRunner()
+
+    with pytest.raises(ValueError):
+        _browser(runner).get_accounts_context(account_ids, limit=10)
+
+    assert runner.calls == []
 
 
 def test_invalid_account_id_never_reaches_browser() -> None:

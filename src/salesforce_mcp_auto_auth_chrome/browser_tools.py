@@ -16,6 +16,10 @@ class BrowserRuntime(Protocol):
         self, account_id: str, *, limit: int
     ) -> dict[str, list[dict[str, str]]]: ...
 
+    def get_accounts_context(
+        self, account_ids: list[str], *, limit: int
+    ) -> list[dict[str, Any]]: ...
+
 
 def browser_tools() -> list[types.Tool]:
     """Return narrow read-only tools; no arbitrary URL, JavaScript, or SOQL."""
@@ -60,6 +64,34 @@ def browser_tools() -> list[types.Tool]:
                 "additionalProperties": False,
             },
         ),
+        types.Tool(
+            name="browser_get_accounts_context",
+            description=(
+                "Read pipeline and activity context for up to 10 Accounts in one "
+                "validated managed browser session. Read-only; one background tab; "
+                "cookies and browser security headers never enter tool arguments."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "account_ids": {
+                        "type": "array",
+                        "items": account_id,
+                        "minItems": 1,
+                        "maxItems": 10,
+                        "uniqueItems": True,
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 25,
+                        "default": 25,
+                    },
+                },
+                "required": ["account_ids"],
+                "additionalProperties": False,
+            },
+        ),
     ]
 
 
@@ -67,6 +99,29 @@ async def handle_browser_tool(
     name: str, arguments: dict[str, Any], runtime: BrowserRuntime
 ) -> list[types.TextContent]:
     """Dispatch one typed browser tool and return compact JSON."""
+    if name == "browser_get_accounts_context":
+        if not set(arguments).issubset({"account_ids", "limit"}):
+            raise ValueError("unexpected browser tool arguments")
+        account_ids = arguments.get("account_ids")
+        if not isinstance(account_ids, list) or not all(
+            isinstance(account_id, str) for account_id in account_ids
+        ):
+            raise ValueError("account_ids must be an array of strings")
+        limit = arguments.get("limit", 25)
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise ValueError("limit must be an integer")
+        batch_payload: object = {
+            "accounts": runtime.get_accounts_context(account_ids, limit=limit)
+        }
+        return [
+            types.TextContent(
+                type="text",
+                text=json.dumps(
+                    batch_payload, separators=(",", ":"), ensure_ascii=True
+                ),
+            )
+        ]
+
     account_id = arguments.get("account_id")
     if not isinstance(account_id, str):
         raise ValueError("missing account_id")
