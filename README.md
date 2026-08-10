@@ -5,7 +5,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](#)
 
-A local MCP server that exposes **14 Salesforce tools** (SOQL, SOSL, CRUD, Apex execute, tooling API, REST) inside Claude Desktop — and **auto-refreshes the session from your Chrome browser** so you never have to paste a token into your config again. Wraps [`mcp-salesforce-connector`](https://pypi.org/project/mcp-salesforce-connector/) on PyPI; runs as a stdio MCP launched per-org by Claude Desktop.
+A local MCP server that exposes **16 Salesforce tools** (SOQL, SOSL, CRUD, Apex execute, tooling API, REST, plus two browser-owned account reads) inside Claude Desktop — and **auto-refreshes the session from your Chrome browser** so you never have to paste a token into your config again. Wraps [`mcp-salesforce-connector`](https://pypi.org/project/mcp-salesforce-connector/) on PyPI; runs as a stdio MCP launched per-org by Claude Desktop.
 
 No connected app, no OAuth dance, no copy-pasting session ids — just stay logged into the org in Chrome.
 
@@ -42,6 +42,10 @@ The package is a thin Python shim around `mcp-salesforce-connector`. On every AP
 - **`safari.py`** — `CookieReader` for Safari: parses the binary `Cookies.binarycookies` format (requires Full Disk Access).
 - **`instance.py`** — normalizes Lightning URLs (`*.lightning.force.com`) to My Domain (`*.my.salesforce.com`).
 - **`useragent.py`** — resolves a browser-matching `User-Agent` for outgoing API calls (env override → live DevTools probe → pinned fallback).
+- **`browser.py`** — runs two fixed read-only account workflows in a managed background tab through OpenCLI. The browser owns cookies and security headers; host and user identity must match before a data read runs.
+- **`browser_contracts.py`** — loads the sanitized request fixture and fails closed on response, grid-header, or record-shape drift.
+- **`browser_tools.py`** — adds the typed pipeline and activity tools without exposing arbitrary URLs, JavaScript, fields, or SOQL.
+- **`contracts/browser_requests.v1.json`** — value-free browser request contract: method, templated path, query keys, header names, credential mode, and response shape only.
 - **`validate.py`** — validates a candidate `sid` against the Salesforce REST API (`/services/oauth2/userinfo`).
 - **`utils.py`** — shared reader helpers: longest-suffix host matching and the temp-copy SQLite cookie query used by the Chromium/Firefox readers.
 
@@ -124,9 +128,18 @@ Sign back in and the next tool call works again — no need to restart Claude De
 
 ---
 
-## The 14 tools
+## The 16 tools
 
-All 14 come from the underlying [`mcp-salesforce-connector`](https://pypi.org/project/mcp-salesforce-connector/) — this package just adds auto-auth on top.
+Fourteen come from the underlying [`mcp-salesforce-connector`](https://pypi.org/project/mcp-salesforce-connector/). This package adds two narrow browser-owned reads for account dashboards.
+
+### Browser-owned account reads (2)
+
+| Tool | Purpose |
+| --- | --- |
+| `browser_get_account_pipeline` | Read 10 fixed standard Opportunity fields for one Account through Salesforce UI API |
+| `browser_get_account_activities` | Read Subject, Status/date, and assignee from native Open Activities and Activity History grids |
+
+These tools require a connected [OpenCLI](https://github.com/jackwener/opencli) Browser Bridge profile. Each call creates a background tab, compares its Salesforce host and user ID with the resolved cookie session, runs only fixed read operations, and closes the tab. Cookie values, `Authorization`, request bodies, arbitrary URLs, JavaScript, and caller-supplied SOQL never enter the tool schema or result.
 
 ### Query (2)
 
@@ -288,6 +301,8 @@ Restrict or reorder the search with optional env vars in your Claude Desktop con
 - `SALESFORCE_BROWSERS` — comma-separated browser keys, in priority order. Keys: `chrome`, `comet`, `arc`, `edge`, `brave`, `firefox`, `safari`. Example: `"SALESFORCE_BROWSERS": "comet, chrome"`. This is also how you opt into Firefox — e.g. `"SALESFORCE_BROWSERS": "firefox, chrome"`.
 - `SALESFORCE_SKIP_BROWSERS` — comma-separated browser keys to exclude, applied after the allowlist. Use it to skip probing a browser without listing every other one — e.g. `"SALESFORCE_SKIP_BROWSERS": "safari"` scans every default browser except Safari.
 - `SALESFORCE_PROFILES` — comma-separated profile names to limit to (e.g. `"Default, Profile 1"`). Applies across all selected browsers.
+- `SALESFORCE_OPENCLI_BIN` — optional absolute path to the OpenCLI binary used by the two `browser_` tools. Resolution order is this variable, `~/bin/opencli`, then `PATH`.
+- `SALESFORCE_OPENCLI_PROFILE` — optional connected OpenCLI Browser Bridge profile ID. Required only when more than one connected profile could satisfy a browser-owned call.
 
 **Safari note**: reading Safari cookies requires **Full Disk Access** for the app that launches the MCP server (Claude Desktop or your terminal). Grant it in System Settings → Privacy & Security → Full Disk Access. Without it, Safari is silently skipped and other browsers are still used.
 

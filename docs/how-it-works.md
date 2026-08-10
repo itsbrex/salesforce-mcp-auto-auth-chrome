@@ -125,6 +125,14 @@ Reading the `sid` from Chrome's cookie store is cheap (sub-100ms, even with the 
 
 The only meaningful downside is a small per-call latency. If you're making thousands of calls per minute, add a TTL cache. For interactive Claude usage, it's a non-issue.
 
+## Browser-owned reads
+
+`browser_get_account_pipeline` and `browser_get_account_activities` use a connected OpenCLI Browser Bridge profile instead of copying browser cookies into Python requests. The runtime opens a managed background Salesforce tab, compares its normalized host and current user ID with the resolved cookie session, and fails closed on mismatch.
+
+Pipeline uses the Salesforce UI API related-list resource with a fixed 10-field projection. Activities use native Open Activities and Activity History page navigation, then project header-mapped grid cells to four or three fields. The MCP caller cannot supply a URL, JavaScript, SOQL, object name, related-list name, or field list.
+
+The browser supplies cookies, origin/referrer, `Sec-Fetch-*`, client hints, and User-Agent. Code explicitly sets only `Accept: application/json`. `contracts/browser_requests.v1.json` stores header names and structural shapes, never values, hostnames, IDs, CRM content, or response bodies. Runtime validators reject endpoint, response-key, pagination, grid-header, and record-shape drift before returning data.
+
 ## Why clear OAuth env vars
 
 `mcp-salesforce-connector` supports multiple auth flows (OAuth client credentials, username/password, session id). Which one it picks depends on which env vars are set, with OAuth taking precedence over session id.
@@ -148,7 +156,7 @@ The cost is a few processes, but those processes are idle when not in use and co
 | Attempt | Why it didn't work |
 |---|---|
 | Fork `mcp-salesforce-connector`, add a `--auth-from-chrome` flag | Maintenance burden, divergence from upstream |
-| Use Chrome's DevTools Protocol to read cookies | Requires Chrome to be running with remote debugging enabled; way too much friction for users |
+| Use raw Chrome DevTools Protocol to read cookies | Requires a remote-debugging port and duplicates cookie ownership; typed browser tools instead use the extension-backed OpenCLI bridge and leave cookies inside the browser |
 | Use `mcp-salesforce-connector`'s OAuth path with a shared connected app | Needs a connected app per org; you might as well just paste a token |
 | Wrap `requests.Session` instead of `_call_salesforce` | Too low-level — every other library that uses `requests` would also be affected |
 | Cache the `sid` for 5 minutes | Caused stale-token errors more often than the per-call read added latency |

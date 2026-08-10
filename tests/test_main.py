@@ -37,7 +37,12 @@ class _Resolved:
 @pytest.fixture
 def harness(monkeypatch):
     """Stub the patch installer + connector; capture env at connector-run time."""
-    state: dict = {"installed": False, "connector_ran": False, "env_at_run": {}}
+    state: dict = {
+        "installed": False,
+        "browser_tools_installed": False,
+        "connector_ran": False,
+        "env_at_run": {},
+    }
 
     def fake_install(instance_url, **kwargs):
         state["installed"] = True
@@ -51,12 +56,27 @@ def harness(monkeypatch):
         }
         return 0
 
+    class FakeBrowserRuntime:
+        def __init__(self, instance_url, **kwargs):
+            state["browser_runtime_args"] = (instance_url, kwargs)
+
+    def fake_install_browser_tools(server, **kwargs):
+        state["browser_tools_installed"] = True
+        state["browser_tool_install_args"] = (server, kwargs)
+
     monkeypatch.setattr(entry, "install_patch", fake_install)
+    monkeypatch.setattr(entry, "SalesforceBrowser", FakeBrowserRuntime)
+    monkeypatch.setattr(entry, "install_browser_tools", fake_install_browser_tools)
 
     # Inject a fake `src.salesforce` so `from src.salesforce import main` resolves
     # to our recorder instead of starting the real stdio server.
     sales_mod = types.ModuleType("src.salesforce")
     sales_mod.main = connector_main  # type: ignore[attr-defined]
+    sales_mod.server = types.SimpleNamespace(  # type: ignore[attr-defined]
+        server=object(),
+        handle_list_tools=lambda: None,
+        handle_call_tool=lambda _name, _arguments: None,
+    )
     src_mod = types.ModuleType("src")
     src_mod.salesforce = sales_mod  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "src", src_mod)
@@ -80,6 +100,7 @@ def test_happy_path_seeds_env_installs_patch_and_runs(monkeypatch, harness):
 
     assert rc == 0
     assert harness["installed"]
+    assert harness["browser_tools_installed"]
     assert harness["connector_ran"]
     assert harness["env_at_run"]["SALESFORCE_INSTANCE_URL"] == _URL
     assert harness["env_at_run"]["SALESFORCE_ACCESS_TOKEN"] == "SID123"

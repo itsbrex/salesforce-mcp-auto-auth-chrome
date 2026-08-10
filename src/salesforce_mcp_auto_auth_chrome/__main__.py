@@ -9,6 +9,8 @@ from collections.abc import Mapping
 from typing import cast
 
 from . import __version__
+from .browser import SalesforceBrowser
+from .browser_tools import install_browser_tools
 from .browsers import default_browsers
 from .orgs import resolve_session
 from .patch import PENDING_LOGIN_SENTINEL
@@ -150,6 +152,7 @@ def main() -> int:
     # top-level name `src`.
     try:
         from src.salesforce import main as connector_main
+        from src.salesforce import server as connector_server
     except ImportError as e:
         log.error(
             "could not import the bundled MCP Salesforce connector "
@@ -159,6 +162,20 @@ def main() -> int:
             e,
         )
         return 1
+
+    browser_runtime = SalesforceBrowser(
+        instance_url,
+        pin_browser=resolved.browser,
+        pin_profile=resolved.profile,
+        browsers=browsers,
+        profiles=profiles,
+    )
+    install_browser_tools(
+        connector_server.server,
+        upstream_list=connector_server.handle_list_tools,
+        upstream_call=connector_server.handle_call_tool,
+        runtime=browser_runtime,
+    )
 
     # The connector is untyped; it returns an int exit code.
     try:

@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "api_version": "v60.0",
+  "captured_transport": "existing_authenticated_browser",
+  "operations": {
+    "browser_identity": {
+      "method": "GET",
+      "path_template": "/services/data/{api_version}/chatter/users/me",
+      "query_keys": [],
+      "credentials": "same-origin",
+      "explicit_header_names": ["accept"],
+      "browser_owned_header_names": [
+        "cookie",
+        "origin",
+        "referer",
+        "sec-ch-ua",
+        "sec-ch-ua-mobile",
+        "sec-ch-ua-platform",
+        "sec-fetch-dest",
+        "sec-fetch-mode",
+        "sec-fetch-site",
+        "user-agent"
+      ],
+      "response_required_keys": ["id"]
+    },
+    "account_pipeline": {
+      "method": "GET",
+      "path_template": "/services/data/{api_version}/ui-api/related-list-records/{account_id}/Opportunities",
+      "query_keys": ["fields", "pageSize"],
+      "credentials": "same-origin",
+      "explicit_header_names": ["accept"],
+      "browser_owned_header_names": [
+        "cookie",
+        "origin",
+        "referer",
+        "sec-ch-ua",
+        "sec-ch-ua-mobile",
+        "sec-ch-ua-platform",
+        "sec-fetch-dest",
+        "sec-fetch-mode",
+        "sec-fetch-site",
+        "user-agent"
+      ],
+      "source_response_required_keys": ["count", "nextPageToken", "records"],
+      "response_required_keys": ["done", "records", "sourceKeys", "totalSize"],
+      "record_fields": [
+        "id",
+        "accountId",
+        "name",
+        "stage",
+        "closeDate",
+        "owner",
+        "amount",
+        "expectedRevenue",
+        "probability",
+        "type"
+      ]
+    },
+    "account_activities": {
+      "method": "NAVIGATE",
+      "path_template": "/lightning/r/Account/{account_id}/related/{related_list}/view",
+      "related_lists": {
+        "open": {
+          "api_name": "OpenActivities",
+          "required_headers": ["Subject", "Status", "Due Date", "Assigned To"],
+          "record_fields": ["subject", "status", "due", "assignee"]
+        },
+        "history": {
+          "api_name": "ActivityHistories",
+          "required_headers": ["Subject", "Completed Date", "Assigned To"],
+          "record_fields": ["subject", "date", "assignee"]
+        }
+      },
+      "native_request_shape": [
+        "POST /aura RelatedListUi.getRelatedListInfoByApiName",
+        "POST /aura RelatedListViewDataManager.getItems"
+      ]
+    }
+  }
+}
