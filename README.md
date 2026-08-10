@@ -46,6 +46,7 @@ The package is a thin Python shim around `mcp-salesforce-connector`. On every AP
 - **`browser_contracts.py`** — loads the sanitized request fixture and fails closed on response, grid-header, or record-shape drift.
 - **`browser_tools.py`** — adds the typed pipeline and activity tools without exposing arbitrary URLs, JavaScript, fields, or SOQL.
 - **`contracts/browser_requests.v1.json`** — value-free browser request contract: method, templated path, query keys, header names, credential mode, and response shape only.
+- **`session_status.py`** — resolves and validates browser-owned session, then prints only `{"state":"active"}` or `{"state":"inactive"}` for local health indicators. It never outputs SID, host, browser/profile, or user identity.
 - **`validate.py`** — validates a candidate `sid` against the Salesforce REST API (`/services/oauth2/userinfo`).
 - **`utils.py`** — shared reader helpers: longest-suffix host matching and the temp-copy SQLite cookie query used by the Chromium/Firefox readers.
 
