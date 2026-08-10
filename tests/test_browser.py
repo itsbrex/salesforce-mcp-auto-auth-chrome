@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 
 import pytest
@@ -125,6 +126,15 @@ class FakeRunner:
                 ]
             )
         if "ui-api/related-list-records" in joined:
+            account_match = re.search(r'const accountId="([^"]+)"', joined)
+            account_id = (
+                account_match.group(1) if account_match else "001000000000000AAA"
+            )
+            opportunity_id = (
+                "006000000000001AAA"
+                if account_id == "001000000000001AAA"
+                else "006000000000000AAA"
+            )
             return json.dumps(
                 {
                     "done": True,
@@ -132,8 +142,8 @@ class FakeRunner:
                     "totalSize": 1,
                     "records": [
                         {
-                            "id": "006000000000000AAA",
-                            "accountId": "001000000000000AAA",
+                            "id": opportunity_id,
+                            "accountId": account_id,
                             "name": "Example",
                             "stage": "Qualification",
                             "closeDate": "2026-12-01",
@@ -369,7 +379,8 @@ def test_account_context_batch_reuses_existing_salesforce_tab() -> None:
     command_text = [" ".join(call) for call in runner.calls]
     assert sum(" --window background" in command for command in command_text) == 1
     assert sum("chatter/users/me" in command for command in command_text) == 1
-    assert sum("const accountIds=" in command for command in command_text) == 1
+    assert sum("const accountId=" in command for command in command_text) == 2
+    assert all("Promise.all" not in command for command in command_text)
     targeted = [
         command
         for command in command_text

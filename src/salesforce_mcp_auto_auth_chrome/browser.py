@@ -305,30 +305,17 @@ class SalesforceBrowser:
     def _account_pipeline_batch(
         self, profile: str, session: str, target: str, account_ids: list[str]
     ) -> dict[str, list[dict[str, Any]]]:
-        script = _PIPELINE_BATCH_JS.replace(
-            "__ACCOUNT_IDS__", json.dumps(account_ids, separators=(",", ":"))
-        )
-        payload = self._eval(profile, session, target, script)
-        if not isinstance(payload, list) or len(payload) != len(account_ids):
-            raise RuntimeError(
-                "Salesforce browser contract drift: batch pipeline count changed"
-            )
         pipelines: dict[str, list[dict[str, Any]]] = {}
-        for expected_account_id, item in zip(account_ids, payload, strict=True):
-            if (
-                not isinstance(item, dict)
-                or set(item) != {"accountId", "pipeline"}
-                or item.get("accountId") != expected_account_id
-            ):
-                raise RuntimeError(
-                    "Salesforce browser contract drift: batch pipeline shape changed"
-                )
-            records = validate_pipeline_payload(item["pipeline"])
-            if any(record["accountId"] != expected_account_id for record in records):
+        for account_id in account_ids:
+            script = _PIPELINE_JS.replace("__ACCOUNT_ID__", json.dumps(account_id))
+            records = validate_pipeline_payload(
+                self._eval(profile, session, target, script)
+            )
+            if any(record["accountId"] != account_id for record in records):
                 raise RuntimeError(
                     "Salesforce browser contract drift: batch account changed"
                 )
-            pipelines[expected_account_id] = records
+            pipelines[account_id] = records
         return pipelines
 
     def _eval(self, profile: str, session: str, target: str, script: str) -> object:
@@ -531,37 +518,6 @@ _PIPELINE_JS = f"""
       type:record.fields?.Type?.displayValue||record.fields?.Type?.value||''
     }}))
   }};
-}})()
-""".strip()
-
-_PIPELINE_BATCH_JS = f"""
-(async()=>{{
-  const accountIds=__ACCOUNT_IDS__;
-  const fields=['Opportunity.Id','Opportunity.Name','Opportunity.StageName','Opportunity.CloseDate','Opportunity.Owner.Name','Opportunity.Amount','Opportunity.ExpectedRevenue','Opportunity.Probability','Opportunity.Type','Opportunity.AccountId'].join(',');
-  return await Promise.all(accountIds.map(async accountId=>{{
-    const path='/services/data/{API_VERSION}/ui-api/related-list-records/'+accountId+'/Opportunities?fields='+encodeURIComponent(fields)+'&pageSize=200';
-    const response=await fetch(path,{{
-      headers:{{Accept:'application/json'}},credentials:'same-origin'
-    }});
-    if(!response.ok)return {{accountId,pipeline:{{error:'request_failed',status:response.status}}}};
-    const payload=await response.json();
-    return {{accountId,pipeline:{{
-      sourceKeys:Object.keys(payload).sort(),
-      done:payload.nextPageToken==null,totalSize:payload.count,
-      records:(payload.records||[]).map(record=>({{
-        id:record.id||record.fields?.Id?.value||'',
-        accountId:record.fields?.AccountId?.value||'',
-        name:record.fields?.Name?.displayValue||record.fields?.Name?.value||'',
-        stage:record.fields?.StageName?.displayValue||record.fields?.StageName?.value||'',
-        closeDate:record.fields?.CloseDate?.value||record.fields?.CloseDate?.displayValue||'',
-        owner:record.fields?.Owner?.displayValue||'',
-        amount:record.fields?.Amount?.value,
-        expectedRevenue:record.fields?.ExpectedRevenue?.value,
-        probability:record.fields?.Probability?.value,
-        type:record.fields?.Type?.displayValue||record.fields?.Type?.value||''
-      }}))
-    }}}};
-  }}));
 }})()
 """.strip()
 
