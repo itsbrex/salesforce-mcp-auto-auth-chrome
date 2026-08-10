@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from salesforce_mcp_auto_auth_chrome.cookies import resolve_session
+from salesforce_mcp_auto_auth_chrome.orgs import resolve_session
 from salesforce_mcp_auto_auth_chrome.patch import install
 
 
