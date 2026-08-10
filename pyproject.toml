@@ -48,6 +48,7 @@ Issues = "https://github.com/kugamon/salesforce-mcp-auto-auth-chrome/issues"
 
 [project.scripts]
 salesforce-mcp-auto-auth-chrome = "salesforce_mcp_auto_auth_chrome.__main__:main"
+salesforce-mcp-browser-only = "salesforce_mcp_auto_auth_chrome.browser_only:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/salesforce_mcp_auto_auth_chrome"]

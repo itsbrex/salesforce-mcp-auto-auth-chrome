@@ -10,26 +10,24 @@ import re
 import secrets
 import shutil
 import subprocess
-import urllib.request
+import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from .browser_contracts import (
     validate_activity_payload,
+    validate_ownership_payload,
+    validate_ownership_term,
     validate_pipeline_payload,
     validate_salesforce_id,
 )
-from .cookies import read_sid
 from .instance import normalize_host
 
 API_VERSION = "v60.0"
-
 Runner = Callable[[Sequence[str], float], str]
-SidReader = Callable[..., str | None]
-IdentityReader = Callable[[str, str], str]
 
 
 class BrowserBridgeError(RuntimeError):
@@ -48,9 +46,10 @@ class SalesforceBrowser:
         browsers: list[str] | None = None,
         profiles: list[str] | None = None,
         runner: Runner | None = None,
-        sid_reader: SidReader = read_sid,
-        identity_reader: IdentityReader | None = None,
         binary: str | None = None,
+        pace_seconds: float | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self.instance_url = instance_url.rstrip("/")
         self.pin_browser = pin_browser
@@ -58,43 +57,96 @@ class SalesforceBrowser:
         self.browsers = browsers
         self.profiles = profiles
         self.runner = runner or _run_command
-        self.sid_reader = sid_reader
-        self.identity_reader = identity_reader or _read_user_id
         self.binary = _resolve_binary(binary)
         self.lightning_url = _lightning_url(self.instance_url)
+        self.pace_seconds = (
+            (0 if runner is not None else 0.9) if pace_seconds is None else pace_seconds
+        )
+        if (
+            isinstance(self.pace_seconds, bool)
+            or not isinstance(self.pace_seconds, (int, float))
+            or not 0 <= self.pace_seconds <= 5
+        ):
+            raise ValueError("pace_seconds must be from 0 through 5")
+        self.sleep = sleep
+        self.monotonic = monotonic
+        self._last_browser_operation_at: float | None = None
+        self._active_session: tuple[str, str, str, str] | None = None
+
+    def search_ownership(self, term: str) -> list[dict[str, str]]:
+        """Search fixed ownership fields through Salesforce's native search page."""
+        term = validate_ownership_term(term)
+        with self._managed_session() as (profile, session, target, original_url):
+            try:
+                url = (
+                    f"{self.instance_url}/_ui/search/ui/UnifiedSearchResults"
+                    f"?searchType=2&str={quote(term, safe='')}"
+                )
+                self._command(
+                    profile, session, ["open", url, "--tab", target], timeout=45
+                )
+                payload = self._eval(profile, session, target, _OWNERSHIP_JS)
+            finally:
+                self._restore_tab(profile, session, target, original_url)
+        return validate_ownership_payload(payload)
+
+    def session_is_active(self) -> bool:
+        """Validate current session through browser-owned same-origin fetch."""
+        with self._managed_session():
+            return True
+
+    def close(self) -> None:
+        """Close one process-owned background tab, if opened."""
+        active = self._active_session
+        self._active_session = None
+        if active is None:
+            return
+        profile, session, _target, _home_url = active
+        with suppress(BrowserBridgeError):
+            self._command(profile, session, ["close"], timeout=10)
 
     def get_account_pipeline(self, account_id: str) -> list[dict[str, Any]]:
         """Return fixed standard opportunity fields for one Account."""
-        account_id = validate_salesforce_id(
-            account_id, "001", field_name="account_id"
-        )
-        with self._managed_session() as (profile, session):
+        account_id = validate_salesforce_id(account_id, "001", field_name="account_id")
+        with self._managed_session() as (profile, session, target, _original_url):
             script = _PIPELINE_JS.replace("__ACCOUNT_ID__", json.dumps(account_id))
-            payload = self._eval(profile, session, script)
+            payload = self._eval(profile, session, target, script)
         return validate_pipeline_payload(payload)
 
     def get_account_activities(
         self, account_id: str, *, limit: int = 25
     ) -> dict[str, list[dict[str, str]]]:
         """Return open and historical activities from native related-list pages."""
-        account_id = validate_salesforce_id(
-            account_id, "001", field_name="account_id"
-        )
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 25:
+        account_id = validate_salesforce_id(account_id, "001", field_name="account_id")
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 25
+        ):
             raise ValueError("limit must be an integer from 1 through 25")
 
-        with self._managed_session() as (profile, session):
-            open_payload = self._related_list(
-                profile, session, account_id, "OpenActivities", _OPEN_ACTIVITY_JS, limit
-            )
-            history_payload = self._related_list(
-                profile,
-                session,
-                account_id,
-                "ActivityHistories",
-                _ACTIVITY_HISTORY_JS,
-                limit,
-            )
+        with self._managed_session() as (profile, session, target, original_url):
+            try:
+                open_payload = self._related_list(
+                    profile,
+                    session,
+                    target,
+                    account_id,
+                    "OpenActivities",
+                    _OPEN_ACTIVITY_JS,
+                    limit,
+                )
+                history_payload = self._related_list(
+                    profile,
+                    session,
+                    target,
+                    account_id,
+                    "ActivityHistories",
+                    _ACTIVITY_HISTORY_JS,
+                    limit,
+                )
+            finally:
+                self._restore_tab(profile, session, target, original_url)
         return {
             "upcoming": validate_activity_payload(open_payload, "open"),
             "recent": validate_activity_payload(history_payload, "history"),
@@ -112,63 +164,78 @@ class SalesforceBrowser:
         ]
         if len(set(parsed_ids)) != len(parsed_ids):
             raise ValueError("account_ids must be unique")
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 25:
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 25
+        ):
             raise ValueError("limit must be an integer from 1 through 25")
 
-        with self._managed_session() as (profile, session):
+        with self._managed_session() as (profile, session, target, original_url):
             pipeline_by_account = self._account_pipeline_batch(
-                profile, session, parsed_ids
+                profile, session, target, parsed_ids
             )
             contexts: list[dict[str, Any]] = []
-            for account_id in parsed_ids:
-                open_payload = self._related_list(
-                    profile,
-                    session,
-                    account_id,
-                    "OpenActivities",
-                    _OPEN_ACTIVITY_JS,
-                    limit,
-                )
-                history_payload = self._related_list(
-                    profile,
-                    session,
-                    account_id,
-                    "ActivityHistories",
-                    _ACTIVITY_HISTORY_JS,
-                    limit,
-                )
-                contexts.append(
-                    {
-                        "accountId": account_id,
-                        "opportunities": pipeline_by_account[account_id],
-                        "upcoming": validate_activity_payload(open_payload, "open"),
-                        "recent": validate_activity_payload(
-                            history_payload, "history"
-                        ),
-                    }
-                )
+            try:
+                for account_id in parsed_ids:
+                    open_payload = self._related_list(
+                        profile,
+                        session,
+                        target,
+                        account_id,
+                        "OpenActivities",
+                        _OPEN_ACTIVITY_JS,
+                        limit,
+                    )
+                    history_payload = self._related_list(
+                        profile,
+                        session,
+                        target,
+                        account_id,
+                        "ActivityHistories",
+                        _ACTIVITY_HISTORY_JS,
+                        limit,
+                    )
+                    contexts.append(
+                        {
+                            "accountId": account_id,
+                            "opportunities": pipeline_by_account[account_id],
+                            "upcoming": validate_activity_payload(open_payload, "open"),
+                            "recent": validate_activity_payload(
+                                history_payload, "history"
+                            ),
+                        }
+                    )
+            finally:
+                self._restore_tab(profile, session, target, original_url)
         return contexts
 
     @contextmanager
-    def _managed_session(self) -> Iterator[tuple[str, str]]:
+    def _managed_session(self) -> Iterator[tuple[str, str, str, str]]:
+        if self._active_session is not None:
+            yield self._active_session
+            return
         profile = self._resolve_opencli_profile()
-        sid = self._current_sid()
         session = f"salesforce-mcp-{os.getpid()}-{secrets.token_hex(4)}"
         opened = False
+        home_url = f"{self.lightning_url}/lightning/page/home"
         try:
-            self._command(
+            payload = self._command(
                 profile,
                 session,
-                ["open", f"{self.lightning_url}/lightning/page/home", "--window", "background"],
+                ["open", home_url, "--window", "background"],
                 timeout=45,
             )
+            target = _target_from_open(payload)
             opened = True
-            self._assert_identity(profile, session, sid)
-            yield profile, session
-        finally:
+            self._assert_identity(profile, session, target)
+            self._active_session = (profile, session, target, home_url)
+            yield self._active_session
+        except BaseException:
             if opened:
                 with suppress(BrowserBridgeError):
                     self._command(profile, session, ["close"], timeout=10)
+            raise
 
     def _resolve_opencli_profile(self) -> str:
         binary = self.binary
@@ -188,7 +255,9 @@ class SalesforceBrowser:
             matches = [item for item in connected if item[0] == configured]
         elif self.pin_browser:
             matches = [
-                item for item in connected if item[1].casefold() == self.pin_browser.casefold()
+                item
+                for item in connected
+                if item[1].casefold() == self.pin_browser.casefold()
             ]
             if not matches and len(connected) == 1:
                 matches = connected
@@ -200,20 +269,8 @@ class SalesforceBrowser:
             )
         return matches[0][0]
 
-    def _current_sid(self) -> str:
-        if self.pin_browser and self.pin_profile:
-            sid = self.sid_reader(
-                self.instance_url, [self.pin_browser], [self.pin_profile]
-            )
-        else:
-            sid = self.sid_reader(self.instance_url, self.browsers, self.profiles)
-        if not sid:
-            raise BrowserBridgeError("Salesforce browser session is unavailable")
-        return sid
-
-    def _assert_identity(self, profile: str, session: str, sid: str) -> None:
-        expected_user_id = self.identity_reader(self.instance_url, sid)
-        payload = self._eval(profile, session, _IDENTITY_JS)
+    def _assert_identity(self, profile: str, session: str, target: str) -> None:
+        payload = self._eval(profile, session, target, _IDENTITY_JS)
         if not isinstance(payload, dict):
             raise BrowserBridgeError("Salesforce browser identity check failed")
         host = payload.get("host")
@@ -222,7 +279,8 @@ class SalesforceBrowser:
         if (
             not isinstance(host, str)
             or normalize_host(host) != normalize_host(expected_host)
-            or user_id != expected_user_id
+            or not isinstance(user_id, str)
+            or not re.fullmatch(r"005[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?", user_id)
         ):
             raise BrowserBridgeError("Salesforce browser identity does not match")
 
@@ -230,6 +288,7 @@ class SalesforceBrowser:
         self,
         profile: str,
         session: str,
+        target: str,
         account_id: str,
         related_list: str,
         script: str,
@@ -239,17 +298,17 @@ class SalesforceBrowser:
             f"{self.lightning_url}/lightning/r/Account/{account_id}/related/"
             f"{related_list}/view"
         )
-        self._command(profile, session, ["open", url], timeout=45)
+        self._command(profile, session, ["open", url, "--tab", target], timeout=45)
         expression = script.replace("__LIMIT__", str(limit))
-        return self._eval(profile, session, expression)
+        return self._eval(profile, session, target, expression)
 
     def _account_pipeline_batch(
-        self, profile: str, session: str, account_ids: list[str]
+        self, profile: str, session: str, target: str, account_ids: list[str]
     ) -> dict[str, list[dict[str, Any]]]:
         script = _PIPELINE_BATCH_JS.replace(
             "__ACCOUNT_IDS__", json.dumps(account_ids, separators=(",", ":"))
         )
-        payload = self._eval(profile, session, script)
+        payload = self._eval(profile, session, target, script)
         if not isinstance(payload, list) or len(payload) != len(account_ids):
             raise RuntimeError(
                 "Salesforce browser contract drift: batch pipeline count changed"
@@ -272,8 +331,21 @@ class SalesforceBrowser:
             pipelines[expected_account_id] = records
         return pipelines
 
-    def _eval(self, profile: str, session: str, script: str) -> object:
-        return self._command(profile, session, ["eval", script], timeout=35)
+    def _eval(self, profile: str, session: str, target: str, script: str) -> object:
+        return self._command(
+            profile, session, ["eval", script, "--tab", target], timeout=35
+        )
+
+    def _restore_tab(
+        self, profile: str, session: str, target: str, original_url: str
+    ) -> None:
+        with suppress(BrowserBridgeError):
+            self._command(
+                profile,
+                session,
+                ["open", original_url, "--tab", target],
+                timeout=45,
+            )
 
     def _command(
         self,
@@ -283,6 +355,8 @@ class SalesforceBrowser:
         *,
         timeout: float,
     ) -> object:
+        if args and args[0] in {"open", "eval"}:
+            self._pace_browser_operation()
         command = [
             self._required_binary(),
             "--profile",
@@ -295,7 +369,18 @@ class SalesforceBrowser:
         try:
             return json.loads(output)
         except json.JSONDecodeError as error:
-            raise BrowserBridgeError("OpenCLI browser bridge returned invalid data") from error
+            raise BrowserBridgeError(
+                "OpenCLI browser bridge returned invalid data"
+            ) from error
+
+    def _pace_browser_operation(self) -> None:
+        now = self.monotonic()
+        if self._last_browser_operation_at is not None:
+            remaining = self.pace_seconds - (now - self._last_browser_operation_at)
+            if remaining > 0:
+                self.sleep(remaining)
+                now = self.monotonic()
+        self._last_browser_operation_at = now
 
     def _required_binary(self) -> str:
         if not self.binary:
@@ -332,22 +417,6 @@ def _resolve_binary(explicit: str | None) -> str | None:
     return None
 
 
-def _read_user_id(instance_url: str, sid: str) -> str:
-    request = urllib.request.Request(
-        f"{instance_url}/services/oauth2/userinfo",
-        headers={"Accept": "application/json", "Authorization": f"Bearer {sid}"},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            payload = json.load(response)
-    except (OSError, ValueError) as error:
-        raise BrowserBridgeError("Salesforce identity validation failed") from error
-    user_id = payload.get("user_id") if isinstance(payload, dict) else None
-    if not isinstance(user_id, str):
-        raise BrowserBridgeError("Salesforce identity validation failed")
-    return user_id
-
-
 def _lightning_url(instance_url: str) -> str:
     parsed = urlparse(instance_url)
     host = parsed.hostname or ""
@@ -355,6 +424,20 @@ def _lightning_url(instance_url: str) -> str:
     if not host.endswith(suffix):
         raise BrowserBridgeError("Salesforce instance host is unsupported")
     return f"https://{host[: -len(suffix)]}.lightning.force.com"
+
+
+def _target_from_open(payload: object) -> str:
+    if not isinstance(payload, dict):
+        raise BrowserBridgeError("Salesforce browser target is unavailable")
+    target = payload.get("page") or payload.get("targetId") or payload.get("id")
+    if (
+        not isinstance(target, str)
+        or not target
+        or len(target) > 200
+        or any(character.isspace() for character in target)
+    ):
+        raise BrowserBridgeError("Salesforce browser target is unavailable")
+    return target
 
 
 _IDENTITY_JS = f"""
@@ -366,6 +449,60 @@ _IDENTITY_JS = f"""
   const payload=await response.json();
   return {{host:location.hostname,userId:payload.id||''}};
 }})()
+""".strip()
+
+_OWNERSHIP_JS = r"""
+(async()=>{
+  const prefixes={'001':'Account','003':'Contact','00Q':'Lead'};
+  const actionLabels=new Set(['edit','del','change owner']);
+  const clean=value=>(value||'').trim();
+  const recordMatch=href=>(href||'').match(/(001|003|00Q)[A-Za-z0-9]{12,15}/);
+  const sleep=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
+  let tables=[];
+  for(let attempt=0;attempt<40;attempt++){
+    tables=[...document.querySelectorAll('table')];
+    if(tables.some(table=>[...table.querySelectorAll('a[href]')].some(anchor=>recordMatch(anchor.getAttribute('href')))))break;
+    await sleep(250);
+  }
+  const records=[];
+  for(const table of tables){
+    const headerRow=[...table.querySelectorAll('tr')].find(row=>row.querySelector(':scope > th'));
+    if(!headerRow)continue;
+    const headers=[...headerRow.querySelectorAll(':scope > th, :scope > td')].map(cell=>clean(cell.textContent));
+    const headerText=headers.join('|').toLowerCase();
+    const primaryPrefix=headerText.includes('contact name')?'003':headerText.includes('lead name')?'00Q':headerText.includes('account name')?'001':'';
+    if(!primaryPrefix)continue;
+    const rows=[...table.querySelectorAll(':scope > tbody > tr, :scope > tr')];
+    for(const row of rows){
+      if(row===headerRow)continue;
+      const cells=[...row.querySelectorAll(':scope > th, :scope > td')];
+      const anchors=cells.flatMap(cell=>[...cell.querySelectorAll('a[href]')]);
+      const primaryAnchor=anchors.find(anchor=>recordMatch(anchor.getAttribute('href'))?.[1]===primaryPrefix&&!actionLabels.has(clean(anchor.textContent).toLowerCase()));
+      if(!primaryAnchor)continue;
+      const idMatch=recordMatch(primaryAnchor.getAttribute('href'));
+      if(!idMatch)continue;
+      const valueFor=pattern=>{
+        const index=headers.findIndex(header=>pattern.test(header));
+        return index>=0&&index<cells.length?clean(cells[index].textContent):'';
+      };
+      const accountAnchor=primaryPrefix==='003'?anchors.find(anchor=>recordMatch(anchor.getAttribute('href'))?.[1]==='001'):null;
+      records.push({
+        type:prefixes[primaryPrefix],
+        id:idMatch[0],
+        name:clean(primaryAnchor.textContent).slice(0,240),
+        owner:valueFor(/owner/i).slice(0,120),
+        email:valueFor(/e-?mail/i).slice(0,320),
+        website:valueFor(/website/i).slice(0,2048),
+        accountId:accountAnchor?(recordMatch(accountAnchor.getAttribute('href'))?.[0]||''):'',
+        company:primaryPrefix==='00Q'?valueFor(/^company$/i).slice(0,240):''
+      });
+      if(records.length>=60)break;
+    }
+    if(records.length>=60)break;
+  }
+  const unique=[...new Map(records.map(record=>[record.id,record])).values()];
+  return {sourceType:'classic_search_page',totalSize:unique.length,records:unique};
+})()
 """.strip()
 
 _PIPELINE_JS = f"""

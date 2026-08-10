@@ -71,6 +71,11 @@ def main() -> int:
     refresh patch, then calls `mcp-salesforce-connector`'s entry point. Always
     exits with the connector's exit code (or 1 on misconfiguration).
     """
+    if os.environ.get("SALESFORCE_BROWSER_ONLY") == "1":
+        from .browser_only import main as browser_only_main
+
+        return browser_only_main(os.environ)
+
     # Logs go to stderr — stdout is the MCP stdio protocol channel and must stay
     # clean. Other modules log via `logging`; configure the root logger here so
     # their messages (and ours) actually surface.

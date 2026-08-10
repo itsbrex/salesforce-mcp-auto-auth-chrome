@@ -8,8 +8,8 @@ from collections.abc import Mapping
 from typing import Literal, TypedDict
 
 from .__main__ import parse_env
-from .orgs import resolve_session
-from .validate import session_is_valid
+from .browser import BrowserBridgeError, SalesforceBrowser
+from .instance import is_salesforce_host, normalize_instance_url
 
 
 class SessionStatus(TypedDict):
@@ -24,12 +24,27 @@ def read_session_status(
     profiles: list[str] | None,
 ) -> SessionStatus:
     """Resolve browser session and confirm Salesforce accepts current SID."""
-    resolved = resolve_session(configured_url, browsers, profiles)
-    active = bool(
-        resolved.instance_url
-        and resolved.sid
-        and session_is_valid(resolved.instance_url, resolved.sid)
+    if not configured_url:
+        return {"state": "inactive"}
+    try:
+        instance_url = normalize_instance_url(configured_url)
+    except ValueError:
+        return {"state": "inactive"}
+    if instance_url is None or not is_salesforce_host(instance_url):
+        return {"state": "inactive"}
+    browser = SalesforceBrowser(
+        instance_url,
+        pin_browser=browsers[0] if browsers and len(browsers) == 1 else None,
+        pin_profile=profiles[0] if profiles and len(profiles) == 1 else None,
+        browsers=browsers,
+        profiles=profiles,
     )
+    try:
+        active = browser.session_is_active()
+    except BrowserBridgeError:
+        active = False
+    finally:
+        browser.close()
     return {"state": "active" if active else "inactive"}
 
 

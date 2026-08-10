@@ -11,6 +11,9 @@ from salesforce_mcp_auto_auth_chrome.browser_tools import (
 
 
 class FakeRuntime:
+    def search_ownership(self, term: str) -> list[dict[str, object]]:
+        return [{"type": "Account", "name": term}]
+
     def get_account_pipeline(self, account_id: str) -> list[dict[str, object]]:
         return [{"accountId": account_id, "name": "Example"}]
 
@@ -57,14 +60,16 @@ def test_browser_tools_are_typed_and_disallow_extra_inputs() -> None:
     tools = browser_tools()
 
     assert [tool.name for tool in tools] == [
+        "browser_search_ownership",
         "browser_get_account_pipeline",
         "browser_get_account_activities",
         "browser_get_accounts_context",
     ]
     assert all(tool.inputSchema["additionalProperties"] is False for tool in tools)
-    assert tools[1].inputSchema["properties"]["limit"]["maximum"] == 25
-    assert tools[2].inputSchema["properties"]["account_ids"]["maxItems"] == 10
-    assert tools[2].inputSchema["properties"]["account_ids"]["uniqueItems"] is True
+    assert tools[0].inputSchema["properties"]["term"]["maxLength"] == 320
+    assert tools[2].inputSchema["properties"]["limit"]["maximum"] == 25
+    assert tools[3].inputSchema["properties"]["account_ids"]["maxItems"] == 10
+    assert tools[3].inputSchema["properties"]["account_ids"]["uniqueItems"] is True
 
 
 def test_handle_browser_tool_returns_compact_json() -> None:
@@ -77,9 +82,7 @@ def test_handle_browser_tool_returns_compact_json() -> None:
     )
 
     assert json.loads(content[0].text) == {
-        "records": [
-            {"accountId": "001000000000000AAA", "name": "Example"}
-        ]
+        "records": [{"accountId": "001000000000000AAA", "name": "Example"}]
     }
 
 
@@ -102,7 +105,7 @@ def test_install_preserves_upstream_tools_and_dispatch() -> None:
 
     assert server.list_handler is not None
     assert server.call_handler is not None
-    assert len(asyncio.run(server.list_handler())) == 3
+    assert len(asyncio.run(server.list_handler())) == 4
     assert asyncio.run(server.call_handler("existing", {})) == ["upstream:existing"]
     result = asyncio.run(
         server.call_handler(
@@ -133,3 +136,17 @@ def test_handle_batch_tool_returns_all_account_contexts() -> None:
         "001000000000000AAA",
         "001000000000001AAA",
     ]
+
+
+def test_handle_ownership_tool_accepts_term_not_arbitrary_sosl() -> None:
+    content = asyncio.run(
+        handle_browser_tool(
+            "browser_search_ownership",
+            {"term": "Example Company"},
+            FakeRuntime(),
+        )
+    )
+
+    assert json.loads(content[0].text) == {
+        "records": [{"type": "Account", "name": "Example Company"}]
+    }

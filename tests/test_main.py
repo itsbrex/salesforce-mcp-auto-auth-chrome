@@ -84,7 +84,11 @@ def harness(monkeypatch):
 
     # Default to a clean macOS env; individual tests override resolution.
     monkeypatch.setattr(sys, "platform", "darwin")
-    for var in ("SALESFORCE_INSTANCE_URL", "SALESFORCE_ACCESS_TOKEN"):
+    for var in (
+        "SALESFORCE_INSTANCE_URL",
+        "SALESFORCE_ACCESS_TOKEN",
+        "SALESFORCE_BROWSER_ONLY",
+    ):
         monkeypatch.delenv(var, raising=False)
     return state
 
@@ -108,6 +112,33 @@ def test_happy_path_seeds_env_installs_patch_and_runs(monkeypatch, harness):
     _, kwargs = harness["install_args"]
     assert kwargs["pin_browser"] == "chrome"
     assert kwargs["pin_profile"] == "Default"
+
+
+def test_browser_only_mode_preserves_main_mcp_entrypoint_without_sid(
+    monkeypatch, harness
+):
+    from salesforce_mcp_auto_auth_chrome import browser_only
+
+    called: list[dict[str, str]] = []
+    monkeypatch.setenv("SALESFORCE_BROWSER_ONLY", "1")
+    monkeypatch.setenv("SALESFORCE_INSTANCE_URL", _URL)
+    monkeypatch.setattr(
+        browser_only,
+        "main",
+        lambda environ: called.append(dict(environ)) or 0,
+    )
+    monkeypatch.setattr(
+        entry,
+        "resolve_session",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("browser-only mode must not resolve or export SID")
+        ),
+    )
+
+    assert entry.main() == 0
+    assert called[0]["SALESFORCE_INSTANCE_URL"] == _URL
+    assert not harness["installed"]
+    assert not harness["connector_ran"]
 
 
 def test_missing_instance_url_errors_without_running_connector(monkeypatch, harness):
@@ -179,8 +210,10 @@ def test_parse_env_skip_is_case_insensitive():
 
 
 def test_parse_env_skip_applies_after_allowlist():
-    env = {"SALESFORCE_BROWSERS": "comet, firefox, chrome",
-           "SALESFORCE_SKIP_BROWSERS": "firefox"}
+    env = {
+        "SALESFORCE_BROWSERS": "comet, firefox, chrome",
+        "SALESFORCE_SKIP_BROWSERS": "firefox",
+    }
     browsers, _ = entry.parse_env(env)
     assert browsers == ["comet", "chrome"]  # order preserved, firefox removed
 

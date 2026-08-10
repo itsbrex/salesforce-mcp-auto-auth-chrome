@@ -32,8 +32,36 @@ class FakeRunner:
         joined = " ".join(call)
         if call[-2:] == ["profile", "list"]:
             return self.profile_output
+        if call[-2:] == ["tab", "list"]:
+            return json.dumps(
+                [
+                    {
+                        "targetId": "SF-TARGET",
+                        "url": "https://acme.lightning.force.com/lightning/page/home",
+                        "title": "Salesforce",
+                    },
+                    {
+                        "targetId": "OTHER-TARGET",
+                        "url": "https://example.invalid/",
+                        "title": "Other",
+                    },
+                ]
+            )
+        if call[-1:] == ["bind"]:
+            return json.dumps(
+                {
+                    "session": "synthetic",
+                    "url": "https://acme.lightning.force.com/lightning/page/home",
+                    "title": "Salesforce",
+                }
+            )
         if " open " in f" {joined} ":
-            return json.dumps({"url": "https://example.invalid", "page": "PAGE"})
+            return json.dumps(
+                {
+                    "url": "https://acme.lightning.force.com/lightning/page/home",
+                    "page": "SF-TARGET",
+                }
+            )
         if call[-1:] == ["close"]:
             return json.dumps({"closed": True})
         if "chatter/users/me" in joined:
@@ -41,6 +69,25 @@ class FakeRunner:
                 {
                     "host": "acme.lightning.force.com",
                     "userId": self.browser_user_id,
+                }
+            )
+        if "const prefixes=" in joined:
+            return json.dumps(
+                {
+                    "sourceType": "classic_search_page",
+                    "totalSize": 1,
+                    "records": [
+                        {
+                            "type": "Account",
+                            "id": "001000000000000AAA",
+                            "name": "Example Company",
+                            "owner": "Owner",
+                            "email": "",
+                            "website": "https://example.invalid",
+                            "accountId": "",
+                            "company": "",
+                        }
+                    ],
                 }
             )
         if "const accountIds=" in joined and "ui-api/related-list-records" in joined:
@@ -139,9 +186,8 @@ def _browser(runner: FakeRunner) -> SalesforceBrowser:
         pin_browser="comet",
         pin_profile="Default",
         runner=runner,
-        sid_reader=lambda *_args, **_kwargs: "SID-SECRET",
-        identity_reader=lambda _url, _sid: "005000000000000AAA",
         binary="opencli",
+        pace_seconds=0,
     )
 
 
@@ -153,13 +199,93 @@ def test_pipeline_uses_browser_owned_credentials_without_exporting_sid() -> None
     assert len(records) == 1
     command_text = "\n".join(" ".join(call) for call in runner.calls)
     assert "--window background" in command_text
+    assert "--tab SF-TARGET" in command_text
     assert "credentials:'same-origin'" in command_text
     assert "Accept:'application/json'" in command_text
-    assert "SID-SECRET" not in command_text
     assert "Authorization" not in command_text
     assert "Cookie" not in command_text
     assert "FROM Opportunity" not in command_text
-    assert any("close" in call for call in runner.calls)
+    assert not any(call[-1:] == ["close"] for call in runner.calls)
+
+
+def test_ownership_search_executes_inside_browser_with_fixed_contract() -> None:
+    runner = FakeRunner()
+
+    records = _browser(runner).search_ownership("Example Company")
+
+    assert records == [
+        {
+            "type": "Account",
+            "id": "001000000000000AAA",
+            "name": "Example Company",
+            "owner": "Owner",
+            "email": "",
+            "website": "https://example.invalid",
+            "accountId": "",
+            "company": "",
+        }
+    ]
+    command_text = "\n".join(" ".join(call) for call in runner.calls)
+    assert (
+        "/_ui/search/ui/UnifiedSearchResults?searchType=2&str=Example%20Company"
+        in command_text
+    )
+    assert "--tab SF-TARGET" in command_text
+    assert "document.querySelectorAll('table')" in command_text
+    assert "actionLabels.has" in command_text
+    assert "/services/data/v60.0/search/?q=" not in command_text
+    ownership_command = next(
+        command for command in command_text.splitlines() if "const prefixes=" in command
+    )
+    assert "fetch(" not in ownership_command
+    assert "Authorization" not in command_text
+    assert "Cookie" not in command_text
+
+
+def test_ownership_search_url_encodes_literal_term() -> None:
+    runner = FakeRunner()
+
+    _browser(runner).search_ownership("A&B + West")
+
+    command_text = "\n".join(" ".join(call) for call in runner.calls)
+    assert "str=A%26B%20%2B%20West" in command_text
+
+
+def test_browser_operations_are_serialized_with_minimum_pacing() -> None:
+    runner = FakeRunner()
+    current = [0.0]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        current[0] += seconds
+
+    browser = SalesforceBrowser(
+        "https://acme.my.salesforce.com",
+        pin_browser="comet",
+        pin_profile="Default",
+        runner=runner,
+        binary="opencli",
+        pace_seconds=0.9,
+        sleep=sleep,
+        monotonic=lambda: current[0],
+    )
+
+    browser.get_account_pipeline("001000000000000AAA")
+
+    assert sleeps == [0.9, 0.9]
+    assert sum(" --window background" in " ".join(call) for call in runner.calls) == 1
+
+
+def test_session_status_is_validated_inside_browser() -> None:
+    runner = FakeRunner()
+
+    assert _browser(runner).session_is_active() is True
+
+    command_text = "\n".join(" ".join(call) for call in runner.calls)
+    assert "chatter/users/me" in command_text
+    assert "credentials:'same-origin'" in command_text
+    assert "Authorization" not in command_text
 
 
 def test_single_connected_profile_is_allowed_after_identity_match() -> None:
@@ -169,8 +295,6 @@ def test_single_connected_profile_is_allowed_after_identity_match() -> None:
         pin_browser="chrome",
         pin_profile="Default",
         runner=runner,
-        sid_reader=lambda *_args, **_kwargs: "SID",
-        identity_reader=lambda _url, _sid: "005000000000000AAA",
         binary="opencli",
     )
 
@@ -191,8 +315,6 @@ def test_ambiguous_profile_mismatch_fails_closed_before_open() -> None:
         pin_browser="chrome",
         pin_profile="Default",
         runner=runner,
-        sid_reader=lambda *_args, **_kwargs: "SID",
-        identity_reader=lambda _url, _sid: "005000000000000AAA",
         binary="opencli",
     )
 
@@ -202,21 +324,19 @@ def test_ambiguous_profile_mismatch_fails_closed_before_open() -> None:
     assert not any("open" in call for call in runner.calls)
 
 
-def test_user_mismatch_fails_closed_and_closes_managed_tab() -> None:
-    runner = FakeRunner(browser_user_id="005999999999999AAA")
+def test_invalid_browser_identity_fails_closed_and_closes_owned_tab() -> None:
+    runner = FakeRunner(browser_user_id="invalid-user")
 
     with pytest.raises(BrowserBridgeError, match="identity"):
         _browser(runner).get_account_pipeline("001000000000000AAA")
 
-    assert any("close" in call for call in runner.calls)
+    assert any(call[-1:] == ["close"] for call in runner.calls)
 
 
 def test_account_activities_return_only_typed_dashboard_fields() -> None:
     runner = FakeRunner()
 
-    result = _browser(runner).get_account_activities(
-        "001000000000000AAA", limit=10
-    )
+    result = _browser(runner).get_account_activities("001000000000000AAA", limit=10)
 
     assert result == {
         "upcoming": [
@@ -227,13 +347,11 @@ def test_account_activities_return_only_typed_dashboard_fields() -> None:
                 "assignee": "Owner",
             }
         ],
-        "recent": [
-            {"subject": "Call", "date": "8/1/2026", "assignee": "Owner"}
-        ],
+        "recent": [{"subject": "Call", "date": "8/1/2026", "assignee": "Owner"}],
     }
 
 
-def test_account_context_batch_reuses_one_managed_session() -> None:
+def test_account_context_batch_reuses_existing_salesforce_tab() -> None:
     runner = FakeRunner()
 
     result = _browser(runner).get_accounts_context(
@@ -252,8 +370,14 @@ def test_account_context_batch_reuses_one_managed_session() -> None:
     assert sum(" --window background" in command for command in command_text) == 1
     assert sum("chatter/users/me" in command for command in command_text) == 1
     assert sum("const accountIds=" in command for command in command_text) == 1
-    assert sum(call[-1:] == ["close"] for call in runner.calls) == 1
-    assert "SID-SECRET" not in "\n".join(command_text)
+    targeted = [
+        command
+        for command in command_text
+        if " eval " in command
+        or (" open " in command and "--window background" not in command)
+    ]
+    assert all("--tab SF-TARGET" in command for command in targeted)
+    assert sum(call[-1:] == ["close"] for call in runner.calls) == 0
 
 
 def test_account_context_batch_closes_session_on_activity_failure() -> None:
@@ -331,8 +455,6 @@ def test_missing_bridge_is_deferred_until_browser_tool_call(
         pin_browser="comet",
         pin_profile="Default",
         runner=runner,
-        sid_reader=lambda *_args, **_kwargs: "SID",
-        identity_reader=lambda _url, _sid: "005000000000000AAA",
     )
 
     with pytest.raises(BrowserBridgeError, match="unavailable"):

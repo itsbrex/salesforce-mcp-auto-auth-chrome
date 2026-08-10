@@ -8,6 +8,7 @@ from importlib.resources import files
 from typing import Any, NoReturn, cast
 
 _ID = re.compile(r"^[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?$")
+_OWNERSHIP_TERM = re.compile(r"^[^\x00-\x1f\x7f]+$")
 
 
 def load_contracts() -> dict[str, Any]:
@@ -23,11 +24,76 @@ def validate_salesforce_id(
     value: str, prefix: str, *, field_name: str = "record_id"
 ) -> str:
     """Validate a 15/18-character Salesforce ID with an expected key prefix."""
-    if not isinstance(value, str) or not _ID.fullmatch(value) or not value.startswith(
-        prefix
+    if (
+        not isinstance(value, str)
+        or not _ID.fullmatch(value)
+        or not value.startswith(prefix)
     ):
         raise ValueError(f"invalid {field_name}")
     return value
+
+
+def validate_ownership_term(value: str) -> str:
+    """Validate one bounded literal term for fixed browser-owned SOSL."""
+    if (
+        not isinstance(value, str)
+        or value != value.strip()
+        or not 1 <= len(value) <= 320
+        or not _OWNERSHIP_TERM.fullmatch(value)
+    ):
+        raise ValueError("invalid ownership search term")
+    return value
+
+
+def validate_ownership_payload(payload: object) -> list[dict[str, str]]:
+    """Validate and project browser ownership search output."""
+    contract = load_contracts()["operations"]["ownership_search"]
+    if not isinstance(payload, dict):
+        _drift("ownership response is not an object")
+    required = set(contract["response_required_keys"])
+    if not required.issubset(payload):
+        _drift("ownership response keys changed")
+    records = payload.get("records")
+    total = payload.get("totalSize")
+    source_type = payload.get("sourceType")
+    if (
+        not isinstance(records, list)
+        or len(records) > 60
+        or not isinstance(total, int)
+        or total != len(records)
+        or source_type != "classic_search_page"
+    ):
+        _drift("ownership response types changed")
+
+    allowed = tuple(contract["record_fields"])
+    prefixes = {"Account": "001", "Contact": "003", "Lead": "00Q"}
+    projected: list[dict[str, str]] = []
+    for record in records:
+        if not isinstance(record, dict) or set(record) != set(allowed):
+            _drift("ownership record shape changed")
+        values = {field: record[field] for field in allowed}
+        if not all(isinstance(value, str) for value in values.values()):
+            _drift("ownership record types changed")
+        record_type = values["type"]
+        prefix = prefixes.get(record_type)
+        try:
+            if prefix is None:
+                raise ValueError("invalid ownership record type")
+            validate_salesforce_id(values["id"], prefix)
+            if values["accountId"]:
+                validate_salesforce_id(values["accountId"], "001")
+        except ValueError:
+            _drift("ownership record IDs changed")
+        if (
+            len(values["name"]) > 240
+            or len(values["owner"]) > 120
+            or len(values["email"]) > 320
+            or len(values["website"]) > 2048
+            or len(values["company"]) > 240
+        ):
+            _drift("ownership record values exceed bounds")
+        projected.append(cast(dict[str, str], values))
+    return projected
 
 
 def validate_pipeline_payload(payload: object) -> list[dict[str, Any]]:
@@ -71,9 +137,7 @@ def validate_pipeline_payload(payload: object) -> list[dict[str, Any]]:
     return projected
 
 
-def validate_activity_payload(
-    payload: object, kind: str
-) -> list[dict[str, str]]:
+def validate_activity_payload(payload: object, kind: str) -> list[dict[str, str]]:
     """Validate and project one related-list grid payload."""
     contracts = load_contracts()["operations"]["account_activities"]["related_lists"]
     if kind not in contracts:

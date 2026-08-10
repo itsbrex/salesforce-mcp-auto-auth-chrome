@@ -10,6 +10,8 @@ import mcp.types as types
 
 
 class BrowserRuntime(Protocol):
+    def search_ownership(self, term: str) -> list[dict[str, str]]: ...
+
     def get_account_pipeline(self, account_id: str) -> list[dict[str, Any]]: ...
 
     def get_account_activities(
@@ -29,6 +31,26 @@ def browser_tools() -> list[types.Tool]:
         "description": "Salesforce Account ID (15 or 18 characters).",
     }
     return [
+        types.Tool(
+            name="browser_search_ownership",
+            description=(
+                "Search fixed Account, Contact, and Lead ownership fields inside "
+                "the user's authenticated Salesforce browser session."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "term": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 320,
+                        "pattern": r"^[^\u0000-\u001f\u007f]+$",
+                    }
+                },
+                "required": ["term"],
+                "additionalProperties": False,
+            },
+        ),
         types.Tool(
             name="browser_get_account_pipeline",
             description=(
@@ -99,6 +121,21 @@ async def handle_browser_tool(
     name: str, arguments: dict[str, Any], runtime: BrowserRuntime
 ) -> list[types.TextContent]:
     """Dispatch one typed browser tool and return compact JSON."""
+    if name == "browser_search_ownership":
+        if set(arguments) != {"term"} or not isinstance(arguments.get("term"), str):
+            raise ValueError("unexpected browser tool arguments")
+        ownership_payload: object = {
+            "records": runtime.search_ownership(arguments["term"])
+        }
+        return [
+            types.TextContent(
+                type="text",
+                text=json.dumps(
+                    ownership_payload, separators=(",", ":"), ensure_ascii=True
+                ),
+            )
+        ]
+
     if name == "browser_get_accounts_context":
         if not set(arguments).issubset({"account_ids", "limit"}):
             raise ValueError("unexpected browser tool arguments")
@@ -150,9 +187,7 @@ def install_browser_tools(
     server: Any,
     *,
     upstream_list: Callable[[], Awaitable[list[types.Tool]]],
-    upstream_call: Callable[
-        [str, dict[str, Any]], Awaitable[list[types.TextContent]]
-    ],
+    upstream_call: Callable[[str, dict[str, Any]], Awaitable[list[types.TextContent]]],
     runtime: BrowserRuntime,
 ) -> None:
     """Extend connector handlers while preserving every upstream dispatch."""
