@@ -111,6 +111,10 @@ class FakeRunner:
                                     "amount": 125000,
                                     "expectedRevenue": 50000,
                                     "probability": 40,
+                                    "size": 40000,
+                                    "sizeType": "Square Feet",
+                                    "term": 60,
+                                    "leaseType": "Lease Acquisition",
                                     "type": "New Business",
                                 }
                             ],
@@ -151,6 +155,10 @@ class FakeRunner:
                             "amount": 125000,
                             "expectedRevenue": 50000,
                             "probability": 40,
+                            "size": 40000,
+                            "sizeType": "Square Feet",
+                            "term": 60,
+                            "leaseType": "Lease Acquisition",
                             "type": "New Business",
                         }
                     ],
@@ -215,6 +223,14 @@ def test_pipeline_uses_browser_owned_credentials_without_exporting_sid() -> None
     assert "Authorization" not in command_text
     assert "Cookie" not in command_text
     assert "FROM Opportunity" not in command_text
+    assert "Opportunity.Size__c" in command_text
+    assert "Opportunity.Size_Type__c" in command_text
+    assert "Opportunity.Term_Months__c" in command_text
+    assert "Opportunity.Lease_Type__c" in command_text
+    assert records[0]["size"] == 40000
+    assert records[0]["sizeType"] == "Square Feet"
+    assert records[0]["term"] == 60
+    assert records[0]["leaseType"] == "Lease Acquisition"
     assert not any(call[-1:] == ["close"] for call in runner.calls)
 
 
@@ -375,6 +391,12 @@ def test_account_context_batch_reuses_existing_salesforce_tab() -> None:
     assert [context["opportunities"][0]["accountId"] for context in result] == [
         "001000000000000AAA",
         "001000000000001AAA",
+    ]
+    assert [context["opportunities"][0]["size"] for context in result] == [40000, 40000]
+    assert [context["opportunities"][0]["term"] for context in result] == [60, 60]
+    assert [context["opportunities"][0]["leaseType"] for context in result] == [
+        "Lease Acquisition",
+        "Lease Acquisition",
     ]
     command_text = [" ".join(call) for call in runner.calls]
     assert sum(" --window background" in command for command in command_text) == 1

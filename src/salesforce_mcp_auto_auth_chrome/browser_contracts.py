@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from importlib.resources import files
 from typing import Any, NoReturn, cast
@@ -133,6 +134,32 @@ def validate_pipeline_payload(payload: object) -> list[dict[str, Any]]:
             validate_salesforce_id(account_id, "001")
         except ValueError:
             _drift("pipeline record IDs changed")
+        string_bounds = {
+            "name": 240,
+            "stage": 120,
+            "closeDate": 40,
+            "owner": 120,
+            "sizeType": 100,
+            "leaseType": 120,
+            "type": 120,
+        }
+        if any(
+            not isinstance(record.get(field), str)
+            or len(record[field]) > maximum
+            for field, maximum in string_bounds.items()
+        ):
+            _drift("pipeline record strings changed")
+        for field in ("amount", "expectedRevenue", "probability", "size", "term"):
+            value = record.get(field)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+            ):
+                _drift("pipeline record numbers changed")
+        probability = record.get("probability")
+        if probability is not None and not 0 <= probability <= 100:
+            _drift("pipeline probability changed")
         projected.append({field: record[field] for field in allowed})
     return projected
 

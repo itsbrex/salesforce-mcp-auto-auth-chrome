@@ -129,7 +129,7 @@ The only meaningful downside is a small per-call latency. If you're making thous
 
 `browser_get_account_pipeline` and `browser_get_account_activities` use a connected OpenCLI Browser Bridge profile instead of copying browser cookies into Python requests. The runtime opens a managed background Salesforce tab, compares its normalized host and current user ID with the resolved cookie session, and fails closed on mismatch.
 
-Pipeline uses the Salesforce UI API related-list resource with a fixed 10-field projection. Activities use native Open Activities and Activity History page navigation, then project header-mapped grid cells to four or three fields. The MCP caller cannot supply a URL, JavaScript, SOQL, object name, related-list name, or field list.
+Pipeline uses the Salesforce UI API related-list resource with a fixed 14-field projection, including amount, expected revenue, size, size type, term, and lease type. Activities use native Open Activities and Activity History page navigation, then project header-mapped grid cells to four or three fields. The MCP caller cannot supply a URL, JavaScript, SOQL, object name, related-list name, or field list.
 
 The browser supplies cookies, origin/referrer, `Sec-Fetch-*`, client hints, and User-Agent. Code explicitly sets only `Accept: application/json`. `contracts/browser_requests.v1.json` stores header names and structural shapes, never values, hostnames, IDs, CRM content, or response bodies. Runtime validators reject endpoint, response-key, pagination, grid-header, and record-shape drift before returning data.
 

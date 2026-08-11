@@ -75,6 +75,10 @@ def test_pipeline_contract_normalizes_allowed_fields_only() -> None:
                 "amount": 125000,
                 "expectedRevenue": 50000,
                 "probability": 40,
+                "size": 40000,
+                "sizeType": "Square Feet",
+                "term": 60,
+                "leaseType": "Lease Acquisition",
                 "type": "New Business",
                 "ignored": "must not escape",
             }
@@ -94,9 +98,42 @@ def test_pipeline_contract_normalizes_allowed_fields_only() -> None:
             "amount": 125000,
             "expectedRevenue": 50000,
             "probability": 40,
+            "size": 40000,
+            "sizeType": "Square Feet",
+            "term": 60,
+            "leaseType": "Lease Acquisition",
             "type": "New Business",
         }
     ]
+
+
+def test_pipeline_contract_rejects_invalid_rich_field_types() -> None:
+    payload = {
+        "done": True,
+        "sourceKeys": ["count", "nextPageToken", "records"],
+        "totalSize": 1,
+        "records": [
+            {
+                "id": "006000000000000AAA",
+                "accountId": "001000000000000AAA",
+                "name": "Example",
+                "stage": "Qualification",
+                "closeDate": "2026-12-01",
+                "owner": "Owner",
+                "amount": 125000,
+                "expectedRevenue": 50000,
+                "probability": 40,
+                "size": "40000",
+                "sizeType": "Square Feet",
+                "term": 60,
+                "leaseType": "Lease Acquisition",
+                "type": "New Business",
+            }
+        ],
+    }
+
+    with pytest.raises(RuntimeError, match="contract drift"):
+        validate_pipeline_payload(payload)
 
 
 def test_activity_contract_rejects_missing_headers() -> None:

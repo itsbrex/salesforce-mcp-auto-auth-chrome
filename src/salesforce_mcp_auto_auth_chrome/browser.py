@@ -495,7 +495,7 @@ _OWNERSHIP_JS = r"""
 _PIPELINE_JS = f"""
 (async()=>{{
   const accountId=__ACCOUNT_ID__;
-  const fields=['Opportunity.Id','Opportunity.Name','Opportunity.StageName','Opportunity.CloseDate','Opportunity.Owner.Name','Opportunity.Amount','Opportunity.ExpectedRevenue','Opportunity.Probability','Opportunity.Type','Opportunity.AccountId'].join(',');
+  const fields=['Opportunity.Id','Opportunity.Name','Opportunity.StageName','Opportunity.CloseDate','Opportunity.Owner.Name','Opportunity.Amount','Opportunity.ExpectedRevenue','Opportunity.Probability','Opportunity.Size__c','Opportunity.Size_Type__c','Opportunity.Term_Months__c','Opportunity.Lease_Type__c','Opportunity.Type','Opportunity.AccountId'].join(',');
   const path='/services/data/{API_VERSION}/ui-api/related-list-records/'+accountId+'/Opportunities?fields='+encodeURIComponent(fields)+'&pageSize=200';
   const response=await fetch(path,{{
     headers:{{Accept:'application/json'}},credentials:'same-origin'
@@ -515,6 +515,10 @@ _PIPELINE_JS = f"""
       amount:record.fields?.Amount?.value,
       expectedRevenue:record.fields?.ExpectedRevenue?.value,
       probability:record.fields?.Probability?.value,
+      size:record.fields?.Size__c?.value,
+      sizeType:record.fields?.Size_Type__c?.displayValue||record.fields?.Size_Type__c?.value||'',
+      term:record.fields?.Term_Months__c?.value,
+      leaseType:record.fields?.Lease_Type__c?.displayValue||record.fields?.Lease_Type__c?.value||'',
       type:record.fields?.Type?.displayValue||record.fields?.Type?.value||''
     }}))
   }};

@@ -129,18 +129,20 @@ Sign back in and the next tool call works again — no need to restart Claude De
 
 ---
 
-## The 16 tools
+## The 18 tools
 
-Fourteen come from the underlying [`mcp-salesforce-connector`](https://pypi.org/project/mcp-salesforce-connector/). This package adds two narrow browser-owned reads for account dashboards.
+Fourteen come from the underlying [`mcp-salesforce-connector`](https://pypi.org/project/mcp-salesforce-connector/). This package adds four narrow browser-owned reads for account dashboards.
 
-### Browser-owned account reads (2)
+### Browser-owned account reads (4)
 
 | Tool | Purpose |
 | --- | --- |
-| `browser_get_account_pipeline` | Read 10 fixed standard Opportunity fields for one Account through Salesforce UI API |
+| `browser_search_ownership` | Search fixed Account, Contact, and Lead ownership fields through native Salesforce search |
+| `browser_get_account_pipeline` | Read 14 fixed Opportunity fields, including amount, expected revenue, size, term, and lease type, through Salesforce UI API |
 | `browser_get_account_activities` | Read Subject, Status/date, and assignee from native Open Activities and Activity History grids |
+| `browser_get_accounts_context` | Read fixed pipeline and activity context for up to 10 Accounts in one validated managed session |
 
-These tools require a connected [OpenCLI](https://github.com/jackwener/opencli) Browser Bridge profile. Each call creates a background tab, compares its Salesforce host and user ID with the resolved cookie session, runs only fixed read operations, and closes the tab. Cookie values, `Authorization`, request bodies, arbitrary URLs, JavaScript, and caller-supplied SOQL never enter the tool schema or result.
+These tools require a connected [OpenCLI](https://github.com/jackwener/opencli) Browser Bridge profile. Runtime creates one managed background tab, compares its Salesforce host and user ID with the resolved cookie session, and serializes fixed read operations through that session. Cookie values, `Authorization`, request bodies, arbitrary URLs, JavaScript, and caller-supplied SOQL never enter tool schemas or results.
 
 ### Query (2)
 
