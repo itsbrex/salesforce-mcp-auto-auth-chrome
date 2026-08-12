@@ -143,6 +143,9 @@ class FakeRunner:
             account_id = (
                 account_match.group(1) if account_match else "001000000000000AAA"
             )
+            response_account_id = (
+                f"{account_id}AAA" if len(account_id) == 15 else account_id
+            )
             opportunity_id = (
                 "006000000000001AAA"
                 if account_id == "001000000000001AAA"
@@ -156,7 +159,7 @@ class FakeRunner:
                     "records": [
                         {
                             "id": opportunity_id,
-                            "accountId": account_id,
+                            "accountId": response_account_id,
                             "name": "Example",
                             "stage": "Qualification",
                             "closeDate": "2026-12-01",
@@ -438,6 +441,13 @@ def test_account_context_batch_reuses_existing_salesforce_tab() -> None:
     ]
     assert all("--tab SF-TARGET" in command for command in targeted)
     assert sum(call[-1:] == ["close"] for call in runner.calls) == 0
+
+
+def test_account_context_accepts_case_safe_account_id_equivalent() -> None:
+    result = _browser(FakeRunner()).get_accounts_context(["001000000000000"], limit=10)
+
+    assert result[0]["accountId"] == "001000000000000"
+    assert result[0]["opportunities"][0]["accountId"] == "001000000000000AAA"
 
 
 def test_account_context_batch_closes_session_on_activity_failure() -> None:

@@ -325,7 +325,7 @@ class SalesforceBrowser:
             records = validate_pipeline_payload(
                 self._eval(profile, session, target, script)
             )
-            if any(record["accountId"] != account_id for record in records):
+            if any(record["accountId"][:15] != account_id[:15] for record in records):
                 raise RuntimeError(
                     "Salesforce browser contract drift: batch account changed"
                 )
