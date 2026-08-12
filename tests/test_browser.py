@@ -20,10 +20,13 @@ class FakeRunner:
         browser_user_id: str = "005000000000000AAA",
         profile_output: str = "  comet-live comet - connected v1.0.22\n",
         fail_on_history: bool = False,
+        rotate_target_on_navigation: bool = False,
     ) -> None:
         self.browser_user_id = browser_user_id
         self.profile_output = profile_output
         self.fail_on_history = fail_on_history
+        self.rotate_target_on_navigation = rotate_target_on_navigation
+        self.open_count = 0
         self.calls: list[list[str]] = []
 
     def __call__(self, args: Sequence[str], timeout: float) -> str:
@@ -57,10 +60,16 @@ class FakeRunner:
                 }
             )
         if " open " in f" {joined} ":
+            self.open_count += 1
+            target = (
+                f"SF-TARGET-{self.open_count}"
+                if self.rotate_target_on_navigation
+                else "SF-TARGET"
+            )
             return json.dumps(
                 {
                     "url": "https://acme.lightning.force.com/lightning/page/home",
-                    "page": "SF-TARGET",
+                    "page": target,
                 }
             )
         if call[-1:] == ["close"]:
@@ -275,6 +284,23 @@ def test_ownership_search_url_encodes_literal_term() -> None:
 
     command_text = "\n".join(" ".join(call) for call in runner.calls)
     assert "str=A%26B%20%2B%20West" in command_text
+
+
+def test_navigation_tracks_rotated_opencli_page_target() -> None:
+    runner = FakeRunner(rotate_target_on_navigation=True)
+    browser = _browser(runner)
+
+    browser.search_ownership("Example Company")
+    browser.get_account_pipeline("001000000000000AAA")
+
+    ownership_eval = next(
+        call for call in runner.calls if "const prefixes=" in " ".join(call)
+    )
+    pipeline_eval = next(
+        call for call in runner.calls if "ui-api/related-list-records" in " ".join(call)
+    )
+    assert ownership_eval[-1] == "SF-TARGET-2"
+    assert pipeline_eval[-1] == "SF-TARGET-3"
 
 
 def test_browser_operations_are_serialized_with_minimum_pacing() -> None:

@@ -82,9 +82,7 @@ class SalesforceBrowser:
                     f"{self.instance_url}/_ui/search/ui/UnifiedSearchResults"
                     f"?searchType=2&str={quote(term, safe='')}"
                 )
-                self._command(
-                    profile, session, ["open", url, "--tab", target], timeout=45
-                )
+                target = self._navigate(profile, session, target, url)
                 payload = self._eval(profile, session, target, _OWNERSHIP_JS)
             finally:
                 self._restore_tab(profile, session, target, original_url)
@@ -298,9 +296,24 @@ class SalesforceBrowser:
             f"{self.lightning_url}/lightning/r/Account/{account_id}/related/"
             f"{related_list}/view"
         )
-        self._command(profile, session, ["open", url, "--tab", target], timeout=45)
+        target = self._navigate(profile, session, target, url)
         expression = script.replace("__LIMIT__", str(limit))
         return self._eval(profile, session, target, expression)
+
+    def _navigate(
+        self, profile: str, session: str, target: str, url: str
+    ) -> str:
+        active = self._active_session
+        if active is not None and active[0] == profile and active[1] == session:
+            target = active[2]
+        payload = self._command(
+            profile, session, ["open", url, "--tab", target], timeout=45
+        )
+        next_target = _target_from_open(payload)
+        active = self._active_session
+        if active is not None and active[0] == profile and active[1] == session:
+            self._active_session = (profile, session, next_target, active[3])
+        return next_target
 
     def _account_pipeline_batch(
         self, profile: str, session: str, target: str, account_ids: list[str]
@@ -327,12 +340,7 @@ class SalesforceBrowser:
         self, profile: str, session: str, target: str, original_url: str
     ) -> None:
         with suppress(BrowserBridgeError):
-            self._command(
-                profile,
-                session,
-                ["open", original_url, "--tab", target],
-                timeout=45,
-            )
+            self._navigate(profile, session, target, original_url)
 
     def _command(
         self,
