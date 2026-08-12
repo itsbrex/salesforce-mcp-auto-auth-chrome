@@ -249,7 +249,7 @@ SALESFORCE_INSTANCE_URL=https://yourdomain.my.salesforce.com \
   uv run python -m salesforce_mcp_auto_auth_chrome
 ```
 
-The process will start, print `[salesforce-mcp-auto-auth-chrome v0.1.0] Ready for ...`, and wait for MCP JSON-RPC on stdin.
+The process will start, print `[salesforce-mcp-auto-auth-chrome v0.2.0] Ready for ...`, and wait for MCP JSON-RPC on stdin.
 
 To point your local Claude Desktop config at the working copy instead of the published repo, change the args to:
 
@@ -285,6 +285,12 @@ Every API call. The `sid` from Chrome is read fresh each time — Salesforce ses
 
 **Claude shows "Server disconnected" at startup**: Almost always means the wrapper failed to import something — usually `cryptography` or `mcp-salesforce-connector`. Look at `~/Library/Logs/Claude/mcp-server-<name>.log` for the actual Python traceback. Most fixes are a `uvx --reinstall` or running `uv sync` if you're working from a local clone.
 
+**All Salesforce MCPs disconnect at once, log shows `AttributeError: 'Server' object has no attribute 'list_tools'`**: This means `uvx` resolved the `mcp` Python SDK to **2.0.0 or later**, which removed the low-level `Server.list_tools()` decorator that `mcp-salesforce-connector` (the upstream package we wrap) still uses. **Fixed in v0.1.1+** — this package now pins `mcp<2.0` at install time. If you're on an older version, either upgrade (`uvx --reinstall salesforce-mcp-auto-auth-chrome`) or add `--with "mcp<2"` to your `uvx` args as an immediate workaround:
+
+```jsonc
+"args": ["--with", "mcp<2", "salesforce-mcp-auto-auth-chrome"]
+```
+
 **`Not logged into Salesforce in any supported browser for ...`** in chat: The wrapper couldn't find a `sid` cookie for the configured instance URL. Open that org in any supported browser, sign in, then retry your Claude request. No Claude restart needed — the next tool call reads cookies fresh.
 
 **`SALESFORCE_INSTANCE_URL` is optional**: If you omit it, the wrapper auto-discovers a logged-in org by scanning your browser cookies and validating each candidate `sid` against the REST API. Set it to pin a specific org. You can pass either a My Domain URL (`https://acme.my.salesforce.com`) **or** a Lightning URL (`https://acme.lightning.force.com`) — Lightning URLs are normalized to the My Domain host automatically.
@@ -311,11 +317,12 @@ Restrict or reorder the search with optional env vars in your Claude Desktop con
 
 **Cookie reads work in Chrome standalone but the MCP can't read them**: The MCP process needs permission to access Keychain. If you ever click "Don't Allow" on the Keychain prompt by accident, open Keychain Access → search for "Chrome Safe Storage" → right-click → "Get Info" → "Access Control" → add the `uv` executable, or just delete the entry and let Chrome recreate it.
 
-**Want to see what the wrapper is doing?**: Logs go to stderr, which Claude Desktop captures at `~/Library/Logs/Claude/mcp-server-<name>.log`. The wrapper prints `[salesforce-mcp-auto-auth-chrome v0.1.0] Ready for ...` at startup and `cookie read failed: ...` on individual failures.
+**Want to see what the wrapper is doing?**: Logs go to stderr, which Claude Desktop captures at `~/Library/Logs/Claude/mcp-server-<name>.log`. The wrapper prints `[salesforce-mcp-auto-auth-chrome v0.2.0] Ready for ...` at startup and `cookie read failed: ...` on individual failures.
 
 ---
 
 ## Version history
 
+- **v0.2.0 (unreleased)** — multi-browser, multi-profile `sid` lookup (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari). Native cookie decryption via `cryptography` (replaces `pycookiecheat`). New `SALESFORCE_BROWSERS` / `SALESFORCE_PROFILES` env vars. Lightning→My Domain URL normalization; `SALESFORCE_INSTANCE_URL` now optional with REST-validated org auto-discovery. Per-call sid refresh pinned to the resolved profile, with 401/expired-session retry and an upstream-signature self-check. Browser-owned read tools and the `salesforce-mcp-browser-only` entry point. End-to-end smoke test at `scripts/smoke.py`. macOS-only.
+- **v0.1.1** — pin `mcp<2.0` at install time. The `mcp` Python SDK shipped 2.0.0 on 2026-07-28, removing the low-level `Server.list_tools()` decorator that `mcp-salesforce-connector` 0.1.15 relies on. Before this pin, every fresh `uvx` resolution crashed at import with `AttributeError: 'Server' object has no attribute 'list_tools'`. No functional changes — this is purely a dependency guard until the upstream connector is ported to the 2.x API.
 - **v0.1.0** — initial release on PyPI. 14 tools (via mcp-salesforce-connector 0.1.15). Chrome-only, macOS-only, per-call `sid` refresh.
-- **Unreleased** — multi-browser, multi-profile `sid` lookup (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari). Native cookie decryption via `cryptography` (replaces `pycookiecheat`). New `SALESFORCE_BROWSERS` / `SALESFORCE_PROFILES` env vars. Lightning→My Domain URL normalization; `SALESFORCE_INSTANCE_URL` now optional with REST-validated org auto-discovery. Per-call sid refresh pinned to the resolved profile, with 401/expired-session retry and an upstream-signature self-check. End-to-end smoke test at `scripts/smoke.py`. macOS-only.

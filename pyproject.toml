@@ -39,6 +39,11 @@ dependencies = [
     "mcp-salesforce-connector>=0.1.15,<0.2",
     "cryptography>=49,<51",
     "simple-salesforce>=1.12,<2",
+    # Pin mcp SDK below 2.0 — upstream mcp-salesforce-connector 0.1.15 uses
+    # the low-level Server.list_tools() decorator API that was removed in
+    # mcp 2.0.0 (Jul 2026). Until the connector is ported to the 2.x API,
+    # this pin prevents the AttributeError crash at import time.
+    "mcp>=1.0,<2.0",
 ]
 
 [project.urls]
