@@ -35,7 +35,7 @@ The package is a thin Python shim around `mcp-salesforce-connector`. On every AP
 - **`models.py`** — leaf data types shared across the readers: `BrowserConfig`, `CookieSource`, and the `CookieReader` interface. Standard library only, so it breaks the registry ↔ reader import cycle.
 - **`cookies.py`** — sid reading. Walks the browser registry and returns the first valid `sid` for a host (`read_sid` / `read_sid_with_source`). Never raises — failures return `None` so callers defer the error to tool-call time.
 - **`orgs.py`** — org resolution. Auto-discovers logged-in orgs (`discover_orgs`), applies the My-Domain-over-Lightning ranking rule, and picks the session to bind (`resolve_session`) with REST validation.
-- **`auth.py`** — deprecated back-compat surface: re-exports `read_sid` and provides the `read_sid_from_chrome` shim. Nothing in the package imports it anymore; slated for removal at 0.2.0.
+- **`auth.py`** — deprecated back-compat surface: re-exports `read_sid` and provides the `read_sid_from_chrome` shim. Nothing in the package imports it anymore; kept for one more release, then removed.
 - **`browsers.py`** — priority-ordered registry of supported browsers (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari) plus the `READERS` dispatch table and `discover_sources`. Callers dispatch through the reader interface, never a `family` switch.
 - **`chromium.py`** — `CookieReader` for Chromium-family browsers: profile discovery plus decryption (AES-128-CBC via `cryptography`, key from macOS Keychain).
 - **`firefox.py`** — `CookieReader` for Firefox: profile discovery plus unencrypted SQLite reads (`moz_cookies`).
@@ -46,6 +46,7 @@ The package is a thin Python shim around `mcp-salesforce-connector`. On every AP
 - **`browser_contracts.py`** — loads the sanitized request fixture and fails closed on response, grid-header, or record-shape drift.
 - **`browser_tools.py`** — adds the typed pipeline and activity tools without exposing arbitrary URLs, JavaScript, fields, or SOQL.
 - **`contracts/browser_requests.v1.json`** — value-free browser request contract: method, templated path, query keys, header names, credential mode, and response shape only.
+- **`browser_only.py`** — second entry point (`salesforce-mcp-browser-only`). Serves only the four browser-owned reads, with no `sid` read, exported, or accepted. Requires `SALESFORCE_INSTANCE_URL` and exits non-zero if it is missing or not a Salesforce host.
 - **`session_status.py`** — resolves and validates browser-owned session, then prints only `{"state":"active"}` or `{"state":"inactive"}` for local health indicators. It never outputs SID, host, browser/profile, or user identity.
 - **`validate.py`** — validates a candidate `sid` against the Salesforce REST API (`/services/oauth2/userinfo`).
 - **`utils.py`** — shared reader helpers: longest-suffix host matching and the temp-copy SQLite cookie query used by the Chromium/Firefox readers.
@@ -143,6 +144,16 @@ Fourteen come from the underlying [`mcp-salesforce-connector`](https://pypi.org/
 | `browser_get_accounts_context` | Read fixed pipeline and activity context for up to 10 Accounts in one validated managed session |
 
 These tools require a connected [OpenCLI](https://github.com/jackwener/opencli) Browser Bridge profile. Runtime creates one managed background tab, compares its Salesforce host and user ID with the resolved cookie session, and serializes fixed read operations through that session. Cookie values, `Authorization`, request bodies, arbitrary URLs, JavaScript, and caller-supplied SOQL never enter tool schemas or results.
+
+**Want only these four tools?** The package also ships a second entry point, `salesforce-mcp-browser-only`, which serves the browser-owned reads and nothing else — no SOQL, no writes, and no `sid` read or exported at any point. It requires `SALESFORCE_INSTANCE_URL` (it will not auto-discover) and fails closed if that URL is missing or is not a Salesforce host:
+
+```jsonc
+{
+  "command": "uvx",
+  "args": ["--from", "salesforce-mcp-auto-auth-chrome", "salesforce-mcp-browser-only"],
+  "env": { "SALESFORCE_INSTANCE_URL": "https://yourdomain.my.salesforce.com" }
+}
+```
 
 ### Query (2)
 
