@@ -230,6 +230,7 @@ class SalesforceBrowser:
             self._active_session = (profile, session, target, home_url)
             yield self._active_session
         except BaseException:
+            self._active_session = None
             if opened:
                 with suppress(BrowserBridgeError):
                     self._command(profile, session, ["close"], timeout=10)

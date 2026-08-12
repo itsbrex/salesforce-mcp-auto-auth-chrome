@@ -190,6 +190,7 @@ class FakeRunner:
             )
         if "ActivityHistories" in joined and "eval" in call:
             if self.fail_on_history:
+                self.fail_on_history = False
                 raise BrowserBridgeError("synthetic history failure")
             return json.dumps(
                 {
@@ -447,6 +448,21 @@ def test_account_context_batch_closes_session_on_activity_failure() -> None:
             ["001000000000000AAA", "001000000000001AAA"], limit=10
         )
 
+    assert sum(call[-1:] == ["close"] for call in runner.calls) == 1
+
+
+def test_account_context_batch_reopens_session_after_activity_failure() -> None:
+    runner = FakeRunner(fail_on_history=True)
+    browser = _browser(runner)
+
+    with pytest.raises(BrowserBridgeError, match="synthetic history failure"):
+        browser.get_accounts_context(["001000000000000AAA"], limit=10)
+
+    result = browser.get_accounts_context(["001000000000000AAA"], limit=10)
+
+    assert [context["accountId"] for context in result] == ["001000000000000AAA"]
+    command_text = [" ".join(call) for call in runner.calls]
+    assert sum(" --window background" in command for command in command_text) == 2
     assert sum(call[-1:] == ["close"] for call in runner.calls) == 1
 
 
