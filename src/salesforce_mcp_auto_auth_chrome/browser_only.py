@@ -14,7 +14,7 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
 from . import __version__
-from .browser import SalesforceBrowser
+from .browser import BrowserBridgeError, SalesforceBrowser
 from .browser_tools import browser_tools, handle_browser_tool
 from .instance import is_salesforce_host, normalize_instance_url
 
@@ -84,7 +84,10 @@ def main(environ: Mapping[str, str] = os.environ) -> int:
     """Start strict server or fail closed on missing browser configuration."""
     try:
         runtime = create_runtime(environ)
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, BrowserBridgeError) as error:
+        # BrowserBridgeError covers hosts this server cannot drive — a
+        # Salesforce host with no Lightning equivalent passes create_runtime's
+        # own checks but is rejected when the runtime is built.
         print(f"[salesforce-browser-only] {error}", file=sys.stderr)
         return 1
     try:

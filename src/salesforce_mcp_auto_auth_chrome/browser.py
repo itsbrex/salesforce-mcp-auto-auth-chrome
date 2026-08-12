@@ -90,11 +90,19 @@ class SalesforceBrowser:
 
     def session_is_active(self) -> bool:
         """Validate current session through browser-owned same-origin fetch."""
-        with self._managed_session():
+        # Opening a session already asserts identity, but a *cached* one was
+        # asserted at some earlier point and may since have died, so re-check
+        # it here rather than reporting "active" on the strength of a handle.
+        with self._managed_session() as (profile, session, target, _original_url):
+            self._assert_identity(profile, session, target)
             return True
 
     def close(self) -> None:
         """Close one process-owned background tab, if opened."""
+        self._discard_active_session()
+
+    def _discard_active_session(self) -> None:
+        """Forget the cached session and best-effort close its tab."""
         active = self._active_session
         self._active_session = None
         if active is None:
@@ -211,7 +219,17 @@ class SalesforceBrowser:
     @contextmanager
     def _managed_session(self) -> Iterator[tuple[str, str, str, str]]:
         if self._active_session is not None:
-            yield self._active_session
+            # A cached session can die outside this process — the user closes
+            # the tab, the browser discards it under memory pressure, the
+            # OpenCLI daemon restarts. Dropping the cache on failure is what
+            # keeps that from being permanent: this call still reports the
+            # error, but the next one opens a fresh session instead of
+            # replaying the same dead handle forever.
+            try:
+                yield self._active_session
+            except BaseException:
+                self._discard_active_session()
+                raise
             return
         profile = self._resolve_opencli_profile()
         session = f"salesforce-mcp-{os.getpid()}-{secrets.token_hex(4)}"

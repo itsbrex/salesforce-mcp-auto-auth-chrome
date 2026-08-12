@@ -22,6 +22,19 @@ def test_browser_only_runtime_requires_configured_org() -> None:
         browser_only.create_runtime({})
 
 
+def test_browser_only_fails_closed_on_an_undrivable_salesforce_host(capsys) -> None:
+    # is_salesforce_host accepts a classic pod host, but the runtime needs a
+    # Lightning equivalent it cannot derive — that has to exit 1 with the
+    # sanitized message, not escape as a traceback.
+    assert (
+        browser_only.main({"SALESFORCE_INSTANCE_URL": "https://na139.salesforce.com"})
+        == 1
+    )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("[salesforce-browser-only]")
+
+
 def test_browser_only_entrypoint_has_no_sid_or_upstream_http_imports() -> None:
     source = Path(browser_only.__file__).read_text(encoding="utf-8")
     for forbidden in [

@@ -32,13 +32,18 @@ def read_session_status(
         return {"state": "inactive"}
     if instance_url is None or not is_salesforce_host(instance_url):
         return {"state": "inactive"}
-    browser = SalesforceBrowser(
-        instance_url,
-        pin_browser=browsers[0] if browsers and len(browsers) == 1 else None,
-        pin_profile=profiles[0] if profiles and len(profiles) == 1 else None,
-        browsers=browsers,
-        profiles=profiles,
-    )
+    # Construction itself rejects hosts with no Lightning equivalent, so it has
+    # to be inside the guard: a status probe reports state, it never raises.
+    try:
+        browser = SalesforceBrowser(
+            instance_url,
+            pin_browser=browsers[0] if browsers and len(browsers) == 1 else None,
+            pin_profile=profiles[0] if profiles and len(profiles) == 1 else None,
+            browsers=browsers,
+            profiles=profiles,
+        )
+    except BrowserBridgeError:
+        return {"state": "inactive"}
     try:
         active = browser.session_is_active()
     except BrowserBridgeError:

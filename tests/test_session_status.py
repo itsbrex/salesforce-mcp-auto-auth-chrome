@@ -37,6 +37,15 @@ def test_read_session_status_is_inactive_without_valid_sid(monkeypatch) -> None:
     assert session_status.read_session_status(None, None, None) == {"state": "inactive"}
 
 
+def test_read_session_status_is_inactive_for_undrivable_salesforce_host() -> None:
+    # A classic pod host is Salesforce-served but has no Lightning equivalent,
+    # so the runtime refuses to build. A status probe reports that as inactive
+    # rather than raising out of a function whose whole contract is to answer.
+    assert session_status.read_session_status(
+        "https://na139.salesforce.com", None, None
+    ) == {"state": "inactive"}
+
+
 def test_main_outputs_only_sanitized_state(monkeypatch, capsys) -> None:
     secrets = [
         "SID_SECRET",

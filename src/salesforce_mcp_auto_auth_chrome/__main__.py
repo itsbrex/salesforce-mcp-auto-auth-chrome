@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from typing import cast
 
 from . import __version__
-from .browser import SalesforceBrowser
+from .browser import BrowserBridgeError, SalesforceBrowser
 from .browser_tools import install_browser_tools
 from .browsers import default_browsers
 from .orgs import resolve_session
@@ -168,19 +168,29 @@ def main() -> int:
         )
         return 1
 
-    browser_runtime = SalesforceBrowser(
-        instance_url,
-        pin_browser=resolved.browser,
-        pin_profile=resolved.profile,
-        browsers=browsers,
-        profiles=profiles,
-    )
-    install_browser_tools(
-        connector_server.server,
-        upstream_list=connector_server.handle_list_tools,
-        upstream_call=connector_server.handle_call_tool,
-        runtime=browser_runtime,
-    )
+    # The browser-owned reads only work against a My Domain host, which is a
+    # narrower set than the orgs the sid patch serves (classic pod and login
+    # hosts resolve fine but have no Lightning equivalent to drive). Losing
+    # those four tools must not cost the user the other fourteen, so failing to
+    # build the runtime downgrades the surface instead of killing startup.
+    browser_runtime: SalesforceBrowser | None = None
+    try:
+        browser_runtime = SalesforceBrowser(
+            instance_url,
+            pin_browser=resolved.browser,
+            pin_profile=resolved.profile,
+            browsers=browsers,
+            profiles=profiles,
+        )
+    except BrowserBridgeError as e:
+        log.warning("browser-owned tools unavailable for %s: %s", instance_url, e)
+    else:
+        install_browser_tools(
+            connector_server.server,
+            upstream_list=connector_server.handle_list_tools,
+            upstream_call=connector_server.handle_call_tool,
+            runtime=browser_runtime,
+        )
 
     # The connector is untyped; it returns an int exit code.
     try:
@@ -192,6 +202,11 @@ def main() -> int:
         # BaseException, so the `except ImportError` above does not catch it.)
         log.info("interrupted; shutting down.")
         return 0
+    finally:
+        # The runtime owns a background tab in the user's real browser; leaving
+        # it open outlives the process the user thinks they just quit.
+        if browser_runtime is not None:
+            browser_runtime.close()
 
 
 if __name__ == "__main__":

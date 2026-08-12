@@ -60,6 +60,9 @@ def harness(monkeypatch):
         def __init__(self, instance_url, **kwargs):
             state["browser_runtime_args"] = (instance_url, kwargs)
 
+        def close(self):
+            state["browser_runtime_closed"] = True
+
     def fake_install_browser_tools(server, **kwargs):
         state["browser_tools_installed"] = True
         state["browser_tool_install_args"] = (server, kwargs)
@@ -112,6 +115,36 @@ def test_happy_path_seeds_env_installs_patch_and_runs(monkeypatch, harness):
     _, kwargs = harness["install_args"]
     assert kwargs["pin_browser"] == "chrome"
     assert kwargs["pin_profile"] == "Default"
+
+
+def test_browser_runtime_is_closed_when_the_connector_returns(monkeypatch, harness):
+    _stub_resolution(monkeypatch, _Resolved(_URL, "SID123", "chrome", "Default"))
+
+    assert entry.main() == 0
+    assert harness["browser_runtime_closed"]
+
+
+def test_undrivable_host_drops_browser_tools_but_still_serves_the_connector(
+    monkeypatch, harness
+):
+    # A classic pod host has no Lightning equivalent, so the browser runtime
+    # cannot be built. That costs the four browser_* tools — it must not cost
+    # the fourteen the sid patch serves, which work on this host.
+    from salesforce_mcp_auto_auth_chrome.browser import BrowserBridgeError
+
+    def refuse(instance_url, **kwargs):
+        raise BrowserBridgeError("Salesforce instance host is unsupported")
+
+    monkeypatch.setattr(entry, "SalesforceBrowser", refuse)
+    _stub_resolution(
+        monkeypatch,
+        _Resolved("https://na139.salesforce.com", "SID123", "chrome", "Default"),
+    )
+
+    assert entry.main() == 0
+    assert harness["installed"]
+    assert harness["connector_ran"]
+    assert not harness["browser_tools_installed"]
 
 
 def test_browser_only_mode_preserves_main_mcp_entrypoint_without_sid(

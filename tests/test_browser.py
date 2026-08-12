@@ -476,6 +476,25 @@ def test_account_context_batch_reopens_session_after_activity_failure() -> None:
     assert sum(call[-1:] == ["close"] for call in runner.calls) == 1
 
 
+def test_cached_session_is_discarded_and_reopened_after_it_dies() -> None:
+    # The reopen path also has to cover a session that was already cached by an
+    # earlier successful call — that is the shape a tab closed out from under
+    # us takes, and holding on to the dead handle strands every later call.
+    runner = FakeRunner()
+    browser = _browser(runner)
+
+    browser.get_account_pipeline("001000000000000AAA")
+    runner.fail_on_history = True
+    with pytest.raises(BrowserBridgeError, match="synthetic history failure"):
+        browser.get_account_activities("001000000000000AAA", limit=10)
+
+    records = browser.get_account_pipeline("001000000000000AAA")
+
+    assert len(records) == 1
+    assert sum(" --window background" in " ".join(call) for call in runner.calls) == 2
+    assert sum(call[-1:] == ["close"] for call in runner.calls) == 1
+
+
 @pytest.mark.parametrize(
     "account_ids",
     [
