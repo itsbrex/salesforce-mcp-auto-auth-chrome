@@ -14,6 +14,7 @@ import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
+from threading import RLock
 from typing import Any
 from urllib.parse import quote, urlparse
 
@@ -72,6 +73,7 @@ class SalesforceBrowser:
         self.monotonic = monotonic
         self._last_browser_operation_at: float | None = None
         self._active_session: tuple[str, str, str, str] | None = None
+        self._managed_session_lock = RLock()
 
     def search_ownership(self, term: str) -> list[dict[str, str]]:
         """Search fixed ownership fields through Salesforce's native search page."""
@@ -103,13 +105,14 @@ class SalesforceBrowser:
 
     def _discard_active_session(self) -> None:
         """Forget the cached session and best-effort close its tab."""
-        active = self._active_session
-        self._active_session = None
-        if active is None:
-            return
-        profile, session, _target, _home_url = active
-        with suppress(BrowserBridgeError):
-            self._command(profile, session, ["close"], timeout=10)
+        with self._managed_session_lock:
+            active = self._active_session
+            self._active_session = None
+            if active is None:
+                return
+            profile, session, _target, _home_url = active
+            with suppress(BrowserBridgeError):
+                self._command(profile, session, ["close"], timeout=10)
 
     def get_account_pipeline(self, account_id: str) -> list[dict[str, Any]]:
         """Return fixed standard opportunity fields for one Account."""
@@ -218,6 +221,10 @@ class SalesforceBrowser:
 
     @contextmanager
     def _managed_session(self) -> Iterator[tuple[str, str, str, str]]:
+        with self._managed_session_lock:
+            yield from self._managed_session_unlocked()
+
+    def _managed_session_unlocked(self) -> Iterator[tuple[str, str, str, str]]:
         if self._active_session is not None:
             # A cached session can die outside this process — the user closes
             # the tab, the browser discards it under memory pressure, the

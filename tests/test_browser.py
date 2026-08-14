@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -331,6 +333,51 @@ def test_browser_operations_are_serialized_with_minimum_pacing() -> None:
 
     assert sleeps == [0.9, 0.9]
     assert sum(" --window background" in " ".join(call) for call in runner.calls) == 1
+
+
+def test_concurrent_browser_calls_serialize_and_reuse_managed_session() -> None:
+    class PausingRunner(FakeRunner):
+        def __init__(self) -> None:
+            super().__init__()
+            self.first_pipeline_started = threading.Event()
+            self.second_pipeline_started = threading.Event()
+            self.release_first_pipeline = threading.Event()
+            self.pipeline_calls = 0
+            self.pipeline_calls_lock = threading.Lock()
+
+        def __call__(self, args: Sequence[str], timeout: float) -> str:
+            joined = " ".join(args)
+            if "ui-api/related-list-records" in joined and "eval" in args:
+                with self.pipeline_calls_lock:
+                    self.pipeline_calls += 1
+                    first = self.pipeline_calls == 1
+                if first:
+                    self.first_pipeline_started.set()
+                    self.release_first_pipeline.wait(timeout=1)
+                else:
+                    self.second_pipeline_started.set()
+            return super().__call__(args, timeout)
+
+    runner = PausingRunner()
+    browser = _browser(runner)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(
+            browser.get_account_pipeline, "001000000000000AAA"
+        )
+        assert runner.first_pipeline_started.wait(timeout=1)
+        second = pool.submit(
+            browser.get_account_pipeline, "001000000000001AAA"
+        )
+        overlapped = runner.second_pipeline_started.wait(timeout=0.2)
+        runner.release_first_pipeline.set()
+        assert len(first.result(timeout=1)) == 1
+        assert len(second.result(timeout=1)) == 1
+
+    assert overlapped is False
+    command_text = [" ".join(call) for call in runner.calls]
+    assert sum(" --window background" in command for command in command_text) == 1
+    assert sum("chatter/users/me" in command for command in command_text) == 1
 
 
 def test_session_status_is_validated_inside_browser() -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 
 from salesforce_mcp_auto_auth_chrome.browser_tools import (
     browser_tools,
@@ -84,6 +85,33 @@ def test_handle_browser_tool_returns_compact_json() -> None:
     assert json.loads(content[0].text) == {
         "records": [{"accountId": "001000000000000AAA", "name": "Example"}]
     }
+
+
+def test_browser_tool_call_keeps_event_loop_responsive() -> None:
+    class BlockingRuntime(FakeRuntime):
+        def __init__(self) -> None:
+            self.event_loop_progressed = threading.Event()
+            self.progress_observed = False
+
+        def get_account_pipeline(self, account_id: str) -> list[dict[str, object]]:
+            self.progress_observed = self.event_loop_progressed.wait(timeout=0.5)
+            return super().get_account_pipeline(account_id)
+
+    async def exercise() -> bool:
+        runtime = BlockingRuntime()
+        call = asyncio.create_task(
+            handle_browser_tool(
+                "browser_get_account_pipeline",
+                {"account_id": "001000000000000AAA"},
+                runtime,
+            )
+        )
+        await asyncio.sleep(0)
+        runtime.event_loop_progressed.set()
+        await call
+        return runtime.progress_observed
+
+    assert asyncio.run(exercise()) is True
 
 
 def test_install_preserves_upstream_tools_and_dispatch() -> None:

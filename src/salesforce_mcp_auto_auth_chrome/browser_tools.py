@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
@@ -125,7 +126,9 @@ async def handle_browser_tool(
         if set(arguments) != {"term"} or not isinstance(arguments.get("term"), str):
             raise ValueError("unexpected browser tool arguments")
         ownership_payload: object = {
-            "records": runtime.search_ownership(arguments["term"])
+            "records": await asyncio.to_thread(
+                runtime.search_ownership, arguments["term"]
+            )
         }
         return [
             types.TextContent(
@@ -148,7 +151,9 @@ async def handle_browser_tool(
         if isinstance(limit, bool) or not isinstance(limit, int):
             raise ValueError("limit must be an integer")
         batch_payload: object = {
-            "accounts": runtime.get_accounts_context(account_ids, limit=limit)
+            "accounts": await asyncio.to_thread(
+                runtime.get_accounts_context, account_ids, limit=limit
+            )
         }
         return [
             types.TextContent(
@@ -165,14 +170,20 @@ async def handle_browser_tool(
     if name == "browser_get_account_pipeline":
         if set(arguments) != {"account_id"}:
             raise ValueError("unexpected browser tool arguments")
-        payload: object = {"records": runtime.get_account_pipeline(account_id)}
+        payload: object = {
+            "records": await asyncio.to_thread(
+                runtime.get_account_pipeline, account_id
+            )
+        }
     elif name == "browser_get_account_activities":
         if not set(arguments).issubset({"account_id", "limit"}):
             raise ValueError("unexpected browser tool arguments")
         limit = arguments.get("limit", 25)
         if isinstance(limit, bool) or not isinstance(limit, int):
             raise ValueError("limit must be an integer")
-        payload = runtime.get_account_activities(account_id, limit=limit)
+        payload = await asyncio.to_thread(
+            runtime.get_account_activities, account_id, limit=limit
+        )
     else:
         raise ValueError(f"unknown browser tool: {name}")
     return [
