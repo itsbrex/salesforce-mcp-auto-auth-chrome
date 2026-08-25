@@ -283,6 +283,46 @@ def test_ownership_search_executes_inside_browser_with_fixed_contract() -> None:
     assert "Cookie" not in command_text
 
 
+def test_pipeline_probes_custom_fields_and_degrades_without_them() -> None:
+    # Orgs without the four CRE custom Opportunity fields must still get the
+    # standard pipeline: the script retries a 400 with the standard field list
+    # and serializes missing custom values as null so the contract's record
+    # keys survive JSON serialization.
+    runner = FakeRunner()
+
+    _browser(runner).get_account_pipeline("001000000000000AAA")
+
+    pipeline_command = next(
+        " ".join(call)
+        for call in runner.calls
+        if "ui-api/related-list-records" in " ".join(call)
+    )
+    assert "response.status===400" in pipeline_command
+    assert "baseFor(standardFields)" in pipeline_command
+    assert "Size__c?.value??null" in pipeline_command
+    assert "Size_Type__c?.value||''" in pipeline_command
+    assert "Term_Months__c?.value??null" in pipeline_command
+    assert "Lease_Type__c?.value||''" in pipeline_command
+
+
+def test_ownership_detection_does_not_depend_on_english_labels() -> None:
+    # Non-English orgs render translated column headers, so object detection
+    # must key off record-ID link shapes, never the English literals the grid
+    # used to be matched with (issue #4).
+    runner = FakeRunner()
+
+    _browser(runner).search_ownership("Example Company")
+
+    ownership_command = next(
+        " ".join(call) for call in runner.calls if "const prefixes=" in " ".join(call)
+    )
+    assert "account name" not in ownership_command
+    assert "contact name" not in ownership_command
+    assert "lead name" not in ownership_command
+    assert "detailMatch" in ownership_command
+    assert "counts[match[2]]" in ownership_command
+
+
 def test_ownership_search_url_encodes_literal_term() -> None:
     runner = FakeRunner()
 

@@ -107,6 +107,42 @@ def test_pipeline_contract_normalizes_allowed_fields_only() -> None:
     ]
 
 
+def test_pipeline_contract_accepts_record_without_custom_cre_fields() -> None:
+    # The shape a record takes when the org lacks the four CRE custom fields
+    # and the script fell back to standard fields: numeric customs null,
+    # string customs empty.
+    payload = {
+        "done": True,
+        "sourceKeys": ["count", "nextPageToken", "records"],
+        "totalSize": 1,
+        "records": [
+            {
+                "id": "006000000000000AAA",
+                "accountId": "001000000000000AAA",
+                "name": "Example",
+                "stage": "Qualification",
+                "closeDate": "2026-12-01",
+                "owner": "Owner",
+                "amount": 125000,
+                "expectedRevenue": 50000,
+                "probability": 40,
+                "size": None,
+                "sizeType": "",
+                "term": None,
+                "leaseType": "",
+                "type": "New Business",
+            }
+        ],
+    }
+
+    result = validate_pipeline_payload(payload)
+
+    assert result[0]["size"] is None
+    assert result[0]["term"] is None
+    assert result[0]["sizeType"] == ""
+    assert result[0]["leaseType"] == ""
+
+
 def test_pipeline_contract_rejects_invalid_rich_field_types() -> None:
     payload = {
         "done": True,
