@@ -483,6 +483,17 @@ _OWNERSHIP_JS = r"""
   const actionLabels=new Set(['edit','del','change owner']);
   const clean=value=>(value||'').trim();
   const recordMatch=href=>(href||'').match(/(001|003|00Q)[A-Za-z0-9]{12,15}/);
+  // Classic action links (Edit / Del) embed the record ID too, but their path
+  // keeps going after it ("/001.../e"); a detail link's path ends at the ID
+  // (optionally "/view" in Lightning-shaped hrefs). Detecting tables and rows
+  // by that link shape instead of translated header text keeps the search
+  // working in every Salesforce UI language.
+  const detailMatch=anchor=>{
+    const href=anchor.getAttribute('href')||'';
+    let path=href;
+    try{path=new URL(href,location.origin).pathname;}catch(error){}
+    return path.match(/\/((001|003|00Q)[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?)(?:\/view)?$/);
+  };
   const sleep=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
   let tables=[];
   for(let attempt=0;attempt<40;attempt++){
@@ -495,31 +506,38 @@ _OWNERSHIP_JS = r"""
     const headerRow=[...table.querySelectorAll('tr')].find(row=>row.querySelector(':scope > th'));
     if(!headerRow)continue;
     const headers=[...headerRow.querySelectorAll(':scope > th, :scope > td')].map(cell=>clean(cell.textContent));
-    const headerText=headers.join('|').toLowerCase();
-    const primaryPrefix=headerText.includes('contact name')?'003':headerText.includes('lead name')?'00Q':headerText.includes('account name')?'001':'';
-    if(!primaryPrefix)continue;
+    const counts={'001':0,'003':0,'00Q':0};
+    for(const anchor of table.querySelectorAll('a[href]')){
+      const match=detailMatch(anchor);
+      if(match)counts[match[2]]+=1;
+    }
+    // A Contact grid links each row's Contact and often its Account, so ties
+    // resolve toward the more specific object (003, then 00Q, then 001).
+    const primaryPrefix=['003','00Q','001'].reduce((best,prefix)=>counts[prefix]>counts[best]?prefix:best,'003');
+    if(!counts[primaryPrefix])continue;
     const rows=[...table.querySelectorAll(':scope > tbody > tr, :scope > tr')];
     for(const row of rows){
       if(row===headerRow)continue;
       const cells=[...row.querySelectorAll(':scope > th, :scope > td')];
       const anchors=cells.flatMap(cell=>[...cell.querySelectorAll('a[href]')]);
-      const primaryAnchor=anchors.find(anchor=>recordMatch(anchor.getAttribute('href'))?.[1]===primaryPrefix&&!actionLabels.has(clean(anchor.textContent).toLowerCase()));
+      const primaryAnchor=anchors.find(anchor=>detailMatch(anchor)?.[2]===primaryPrefix&&!actionLabels.has(clean(anchor.textContent).toLowerCase()));
       if(!primaryAnchor)continue;
-      const idMatch=recordMatch(primaryAnchor.getAttribute('href'));
+      const idMatch=detailMatch(primaryAnchor);
       if(!idMatch)continue;
       const valueFor=pattern=>{
         const index=headers.findIndex(header=>pattern.test(header));
         return index>=0&&index<cells.length?clean(cells[index].textContent):'';
       };
-      const accountAnchor=primaryPrefix==='003'?anchors.find(anchor=>recordMatch(anchor.getAttribute('href'))?.[1]==='001'):null;
+      const mailtoAnchor=anchors.find(anchor=>(anchor.getAttribute('href')||'').toLowerCase().startsWith('mailto:'));
+      const accountAnchor=primaryPrefix==='003'?anchors.find(anchor=>detailMatch(anchor)?.[2]==='001'):null;
       records.push({
         type:prefixes[primaryPrefix],
-        id:idMatch[0],
+        id:idMatch[1],
         name:clean(primaryAnchor.textContent).slice(0,240),
         owner:valueFor(/owner/i).slice(0,120),
-        email:valueFor(/e-?mail/i).slice(0,320),
+        email:(valueFor(/e-?mail/i)||(mailtoAnchor?clean(mailtoAnchor.textContent):'')).slice(0,320),
         website:valueFor(/website/i).slice(0,2048),
-        accountId:accountAnchor?(recordMatch(accountAnchor.getAttribute('href'))?.[0]||''):'',
+        accountId:accountAnchor?(detailMatch(accountAnchor)?.[1]||''):'',
         company:primaryPrefix==='00Q'?valueFor(/^company$/i).slice(0,240):''
       });
       if(records.length>=60)break;
@@ -534,17 +552,28 @@ _OWNERSHIP_JS = r"""
 _PIPELINE_JS = f"""
 (async()=>{{
   const accountId=__ACCOUNT_ID__;
-  const fields=['Opportunity.Id','Opportunity.Name','Opportunity.StageName','Opportunity.CloseDate','Opportunity.Owner.Name','Opportunity.Amount','Opportunity.ExpectedRevenue','Opportunity.Probability','Opportunity.Size__c','Opportunity.Size_Type__c','Opportunity.Term_Months__c','Opportunity.Lease_Type__c','Opportunity.Type','Opportunity.AccountId'].join(',');
-  const base='/services/data/{API_VERSION}/ui-api/related-list-records/'+accountId+'/Opportunities?fields='+encodeURIComponent(fields)+'&pageSize=200';
+  const standardFields=['Opportunity.Id','Opportunity.Name','Opportunity.StageName','Opportunity.CloseDate','Opportunity.Owner.Name','Opportunity.Amount','Opportunity.ExpectedRevenue','Opportunity.Probability','Opportunity.Type','Opportunity.AccountId'];
+  const customFields=['Opportunity.Size__c','Opportunity.Size_Type__c','Opportunity.Term_Months__c','Opportunity.Lease_Type__c'];
+  const baseFor=fieldList=>'/services/data/{API_VERSION}/ui-api/related-list-records/'+accountId+'/Opportunities?fields='+encodeURIComponent(fieldList.join(','))+'&pageSize=200';
+  const fetchPage=(base,token)=>fetch(token==null?base:base+'&pageToken='+encodeURIComponent(token),{{
+    headers:{{Accept:'application/json'}},credentials:'same-origin'
+  }});
+  // The four CRE custom fields only exist in some orgs, and the UI API rejects
+  // the whole request when any requested field is invalid. Probe with the full
+  // list once and drop the custom fields on a 400 so the standard pipeline
+  // fields still come back from every org.
+  let base=baseFor(standardFields.concat(customFields));
+  let response=await fetchPage(base,null);
+  if(response.status===400){{
+    base=baseFor(standardFields);
+    response=await fetchPage(base,null);
+  }}
   // Follow nextPageToken so Accounts with more than one page of Opportunities
   // return complete data instead of tripping the contract's done/count checks.
   // Bounded at 50 pages (10k opportunities) as a runaway guard.
   let raw=[],sourceKeys=null,token=null;
   for(let page=0;page<50;page++){{
-    const path=token==null?base:base+'&pageToken='+encodeURIComponent(token);
-    const response=await fetch(path,{{
-      headers:{{Accept:'application/json'}},credentials:'same-origin'
-    }});
+    if(page>0)response=await fetchPage(base,token);
     if(!response.ok)return {{error:'request_failed',status:response.status}};
     const payload=await response.json();
     if(sourceKeys==null)sourceKeys=Object.keys(payload).sort();
@@ -562,12 +591,12 @@ _PIPELINE_JS = f"""
       stage:record.fields?.StageName?.displayValue||record.fields?.StageName?.value||'',
       closeDate:record.fields?.CloseDate?.value||record.fields?.CloseDate?.displayValue||'',
       owner:record.fields?.Owner?.displayValue||'',
-      amount:record.fields?.Amount?.value,
-      expectedRevenue:record.fields?.ExpectedRevenue?.value,
-      probability:record.fields?.Probability?.value,
-      size:record.fields?.Size__c?.value,
+      amount:record.fields?.Amount?.value??null,
+      expectedRevenue:record.fields?.ExpectedRevenue?.value??null,
+      probability:record.fields?.Probability?.value??null,
+      size:record.fields?.Size__c?.value??null,
       sizeType:record.fields?.Size_Type__c?.displayValue||record.fields?.Size_Type__c?.value||'',
-      term:record.fields?.Term_Months__c?.value,
+      term:record.fields?.Term_Months__c?.value??null,
       leaseType:record.fields?.Lease_Type__c?.displayValue||record.fields?.Lease_Type__c?.value||'',
       type:record.fields?.Type?.displayValue||record.fields?.Type?.value||''
     }}))
