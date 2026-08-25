@@ -391,7 +391,28 @@ def test_session_status_is_validated_inside_browser() -> None:
     assert "Authorization" not in command_text
 
 
-def test_single_connected_profile_is_allowed_after_identity_match() -> None:
+def test_lone_connected_profile_matching_pin_is_used() -> None:
+    # The sole connected bridge profile belongs to the pinned browser (comet),
+    # so it is used directly.
+    runner = FakeRunner()
+    browser = SalesforceBrowser(
+        "https://acme.my.salesforce.com",
+        pin_browser="comet",
+        pin_profile="Default",
+        runner=runner,
+        binary="opencli",
+    )
+
+    records = browser.get_account_pipeline("001000000000000AAA")
+
+    assert len(records) == 1
+
+
+def test_lone_connected_profile_off_pin_fails_closed_before_open() -> None:
+    # The sole connected bridge profile belongs to comet, but the cookie session
+    # is pinned to chrome. Falling back across the pin would let reads run under
+    # another browser/user, which the host+005-shape identity check cannot catch,
+    # so resolution must fail closed instead of borrowing the comet bridge.
     runner = FakeRunner()
     browser = SalesforceBrowser(
         "https://acme.my.salesforce.com",
@@ -401,9 +422,10 @@ def test_single_connected_profile_is_allowed_after_identity_match() -> None:
         binary="opencli",
     )
 
-    records = browser.get_account_pipeline("001000000000000AAA")
+    with pytest.raises(BrowserBridgeError, match="browser profile"):
+        browser.get_account_pipeline("001000000000000AAA")
 
-    assert len(records) == 1
+    assert not any("open" in call for call in runner.calls)
 
 
 def test_ambiguous_profile_mismatch_fails_closed_before_open() -> None:

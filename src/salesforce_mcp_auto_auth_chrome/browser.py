@@ -278,13 +278,18 @@ class SalesforceBrowser:
         if configured:
             matches = [item for item in connected if item[0] == configured]
         elif self.pin_browser:
+            # The cookie session is pinned to a specific browser. Require the
+            # bridge profile to be that same browser — never fall back to an
+            # arbitrary lone connected profile. The identity check downstream
+            # only confirms the org host and a 005-shaped user ID, not *which*
+            # user, so a bridge belonging to another browser or Salesforce user
+            # would otherwise be accepted and reads would run under the wrong
+            # principal. Set SALESFORCE_OPENCLI_PROFILE to override explicitly.
             matches = [
                 item
                 for item in connected
                 if item[1].casefold() == self.pin_browser.casefold()
             ]
-            if not matches and len(connected) == 1:
-                matches = connected
         else:
             matches = connected
         if len(matches) != 1:
@@ -530,16 +535,27 @@ _PIPELINE_JS = f"""
 (async()=>{{
   const accountId=__ACCOUNT_ID__;
   const fields=['Opportunity.Id','Opportunity.Name','Opportunity.StageName','Opportunity.CloseDate','Opportunity.Owner.Name','Opportunity.Amount','Opportunity.ExpectedRevenue','Opportunity.Probability','Opportunity.Size__c','Opportunity.Size_Type__c','Opportunity.Term_Months__c','Opportunity.Lease_Type__c','Opportunity.Type','Opportunity.AccountId'].join(',');
-  const path='/services/data/{API_VERSION}/ui-api/related-list-records/'+accountId+'/Opportunities?fields='+encodeURIComponent(fields)+'&pageSize=200';
-  const response=await fetch(path,{{
-    headers:{{Accept:'application/json'}},credentials:'same-origin'
-  }});
-  if(!response.ok)return {{error:'request_failed',status:response.status}};
-  const payload=await response.json();
+  const base='/services/data/{API_VERSION}/ui-api/related-list-records/'+accountId+'/Opportunities?fields='+encodeURIComponent(fields)+'&pageSize=200';
+  // Follow nextPageToken so Accounts with more than one page of Opportunities
+  // return complete data instead of tripping the contract's done/count checks.
+  // Bounded at 50 pages (10k opportunities) as a runaway guard.
+  let raw=[],sourceKeys=null,token=null;
+  for(let page=0;page<50;page++){{
+    const path=token==null?base:base+'&pageToken='+encodeURIComponent(token);
+    const response=await fetch(path,{{
+      headers:{{Accept:'application/json'}},credentials:'same-origin'
+    }});
+    if(!response.ok)return {{error:'request_failed',status:response.status}};
+    const payload=await response.json();
+    if(sourceKeys==null)sourceKeys=Object.keys(payload).sort();
+    raw=raw.concat(payload.records||[]);
+    token=payload.nextPageToken;
+    if(token==null)break;
+  }}
   return {{
-    sourceKeys:Object.keys(payload).sort(),
-    done:payload.nextPageToken==null,totalSize:payload.count,
-    records:(payload.records||[]).map(record=>({{
+    sourceKeys:sourceKeys||[],
+    done:token==null,totalSize:raw.length,
+    records:raw.map(record=>({{
       id:record.id||record.fields?.Id?.value||'',
       accountId:record.fields?.AccountId?.value||'',
       name:record.fields?.Name?.displayValue||record.fields?.Name?.value||'',

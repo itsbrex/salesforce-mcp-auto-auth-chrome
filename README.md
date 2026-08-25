@@ -155,6 +155,17 @@ These tools require a connected [OpenCLI](https://github.com/jackwener/opencli) 
 }
 ```
 
+**Known limitations of the browser-owned reads:**
+
+- `browser_get_account_pipeline` requests four custom Opportunity fields
+  (`Size__c`, `Size_Type__c`, `Term_Months__c`, `Lease_Type__c`). An org that
+  does not define all four has the whole related-list request rejected as an
+  invalid-field error. Capability detection is tracked as a follow-up issue.
+- `browser_search_ownership` identifies the result grids by their English
+  column labels (`Account Name`, `Contact Name`, `Lead Name`), so an org whose
+  UI language is not English silently returns no matches. Locale-independent
+  detection is tracked as a follow-up issue.
+
 ### Query (2)
 
 | Tool | Purpose |
