@@ -8,8 +8,27 @@ on:
       - "v*"
 
 jobs:
+  # Gate releases on a green test run — a tagged build must never reach PyPI
+  # without passing the suite first.
+  test:
+    name: Test before publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+
+      - name: Sync dependencies (incl. dev group)
+        run: uv sync
+
+      - name: Pytest
+        run: uv run pytest
+
   build-and-publish:
     name: Build and publish to PyPI
+    needs: test
     runs-on: ubuntu-latest
 
     # Required for PyPI Trusted Publishing (OIDC). No API token needed —
@@ -26,10 +45,10 @@ jobs:
 
     steps:
       - name: Check out the repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
 
       - name: Build sdist and wheel
         run: uv build
@@ -46,7 +65,7 @@ jobs:
         # The official PyPA action — supports Trusted Publishing out of the box.
         # No `password` or `username` is set: it authenticates via the OIDC
         # token GitHub Actions issues for this job.
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           # Skip the upload if this version is somehow already on PyPI
           # (defensive — shouldn't happen because we tag deliberately).

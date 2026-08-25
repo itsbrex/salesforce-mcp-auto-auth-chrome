@@ -4,13 +4,13 @@ This doc captures the architecture and the design decisions, including the thing
 
 ## The core insight
 
-When you log into Salesforce in Chrome, Chrome stores a cookie named `sid` on the My Domain (e.g. `acme.my.salesforce.com`). The value of that cookie:
+When you log into Salesforce in a browser, that browser stores a cookie named `sid` on the My Domain (e.g. `acme.my.salesforce.com`). The value of that cookie:
 
 - **Is the active session id** for your UI session
 - **Is also accepted as a Bearer token** by Salesforce's REST API (with rare org-level exceptions like IP-locked sessions)
-- **Refreshes automatically** every time you load a Salesforce page in Chrome — as long as you're actively using the org, the cookie stays alive
+- **Refreshes automatically** every time you load a Salesforce page in the browser — as long as you're actively using the org, the cookie stays alive
 
-So if we could just *borrow* that cookie value every time we want to make an API call, we'd never have to manually paste a token again.
+So if we could just *borrow* that cookie value every time we want to make an API call, we'd never have to manually paste a token again. The wrapper checks every supported browser and profile, so it works regardless of which one you logged in with.
 
 That's the whole package, in one sentence.
 
@@ -41,8 +41,10 @@ That's the whole package, in one sentence.
 │  └── monkey-patches simple_salesforce.Salesforce               │
 │      ._call_salesforce → reads fresh sid per call              │
 │                                                                │
-│  auth.py                                                       │
-│  └── chrome_cookies(instance_url) → sid                        │
+│  auth.py / cookies.py                                          │
+│  └── read_sid(instance_url) → sid                              │
+│      └── scans browsers.py registry × profiles, dispatches to  │
+│          chromium.py / firefox.py / safari.py readers          │
 └────────────────────────────────────────────────────────────────┘
                  │
                  │ delegates to
@@ -58,6 +60,31 @@ That's the whole package, in one sentence.
                  ▼
             Salesforce REST API
 ```
+
+## How cookies are read (multi-browser, multi-profile)
+
+The wrapper reads cookies **natively** instead of delegating to `pycookiecheat`. This gives full control over which browsers and profiles are searched. `browsers.py` holds a priority-ordered registry of supported browsers (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari) with their macOS data dirs and Keychain services. `discover_sources()` enumerates every profile in each (chromium `Default`/`Profile N`, each Firefox profile dir, Safari's single store). The orchestrator in `cookies.py` walks those sources in priority order and returns the **first** non-empty `sid` matching the instance host. Optional `SALESFORCE_BROWSERS` / `SALESFORCE_PROFILES` env vars restrict or reorder the search.
+
+Per-family reader details:
+
+- **Chromium** (`chromium.py`): cookies live in a SQLite DB; the DB is copied to a temp file first (to dodge write locks). Encrypted values use the `v10` prefix and are decrypted with a key derived via `PBKDF2-HMAC-SHA1` (salt `saltysalt`, 1003 iterations, 16-byte key) from the per-browser "<Browser> Safe Storage" Keychain password (fetched via the `security` CLI), then AES-128-CBC with a 16-space IV. Newer Chromium prepends a 32-byte `SHA256(host_key)` to the plaintext — stripped only when it matches.
+- **Firefox** (`firefox.py`): cookies are stored unencrypted in `moz_cookies`; no Keychain or decryption needed.
+- **Safari** (`safari.py`): cookies live in a binary `Cookies.binarycookies` file, parsed directly. Reading requires Full Disk Access; without it Safari is skipped silently.
+
+Cookie host matching picks the longest `host_key` that is a suffix of the instance host, so an instance-specific `sid` wins over a broader-domain one.
+
+## Lightning normalization and org auto-discovery
+
+Salesforce serves its Lightning UI from `<org>.lightning.force.com`, but the REST API — and the session cookie that authorizes it — lives on the My Domain host `<org>.my.salesforce.com`. **The `sid` cookie set on the Lightning host is a different value that the REST API rejects with `INVALID_SESSION_ID`.** (We confirmed this empirically: the same org's Lightning and My Domain cookies hold distinct sids.)
+
+So `instance.py` normalizes any configured or discovered host to its My Domain form before either reading cookies or calling the API. `__main__.py` also pins `SALESFORCE_INSTANCE_URL` to that normalized host so the downstream connector talks to the right base URL.
+
+`SALESFORCE_INSTANCE_URL` is now optional. `cookies.resolve_session` picks the org:
+
+1. If a URL is configured, normalize it to My Domain and read its `sid` directly (trusted — no network probe).
+2. Otherwise (or if no sid was found for the configured org), `discover_orgs` scans every browser/profile for Salesforce `sid` cookies, maps each to its My Domain URL, and `validate.session_is_valid` probes each candidate with a single authenticated `GET /services/oauth2/userinfo` (chosen over `/limits`, which needs the API-Enabled/setup perm and 403s for ordinary users with otherwise-valid sessions). The first that returns 200 wins. My Domain-origin cookies are ranked ahead of Lightning-derived ones, and validation filters out the invalid Lightning sids.
+
+This is why the earlier single-profile workaround needed a launcher shim — the packaged tool only read Chrome's nonexistent `Default` profile and never reconciled Lightning vs My Domain. Both problems are now handled natively: multi-profile scanning finds the right profile, and normalization + validation pick the REST-valid sid.
 
 ## Why monkey-patch, why not fork
 
@@ -98,6 +125,14 @@ Reading the `sid` from Chrome's cookie store is cheap (sub-100ms, even with the 
 
 The only meaningful downside is a small per-call latency. If you're making thousands of calls per minute, add a TTL cache. For interactive Claude usage, it's a non-issue.
 
+## Browser-owned reads
+
+`browser_get_account_pipeline` and `browser_get_account_activities` use a connected OpenCLI Browser Bridge profile instead of copying browser cookies into Python requests. The runtime opens a managed background Salesforce tab, compares its normalized host and current user ID with the resolved cookie session, and fails closed on mismatch.
+
+Pipeline uses the Salesforce UI API related-list resource with a fixed 14-field projection, including amount, expected revenue, size, size type, term, and lease type. Activities use native Open Activities and Activity History page navigation, then project header-mapped grid cells to four or three fields. The MCP caller cannot supply a URL, JavaScript, SOQL, object name, related-list name, or field list.
+
+The browser supplies cookies, origin/referrer, `Sec-Fetch-*`, client hints, and User-Agent. Code explicitly sets only `Accept: application/json`. `contracts/browser_requests.v1.json` stores header names and structural shapes, never values, hostnames, IDs, CRM content, or response bodies. Runtime validators reject endpoint, response-key, pagination, grid-header, and record-shape drift before returning data.
+
 ## Why clear OAuth env vars
 
 `mcp-salesforce-connector` supports multiple auth flows (OAuth client credentials, username/password, session id). Which one it picks depends on which env vars are set, with OAuth taking precedence over session id.
@@ -121,7 +156,7 @@ The cost is a few processes, but those processes are idle when not in use and co
 | Attempt | Why it didn't work |
 |---|---|
 | Fork `mcp-salesforce-connector`, add a `--auth-from-chrome` flag | Maintenance burden, divergence from upstream |
-| Use Chrome's DevTools Protocol to read cookies | Requires Chrome to be running with remote debugging enabled; way too much friction for users |
+| Use raw Chrome DevTools Protocol to read cookies | Requires a remote-debugging port and duplicates cookie ownership; typed browser tools instead use the extension-backed OpenCLI bridge and leave cookies inside the browser |
 | Use `mcp-salesforce-connector`'s OAuth path with a shared connected app | Needs a connected app per org; you might as well just paste a token |
 | Wrap `requests.Session` instead of `_call_salesforce` | Too low-level — every other library that uses `requests` would also be affected |
 | Cache the `sid` for 5 minutes | Caused stale-token errors more often than the per-call read added latency |

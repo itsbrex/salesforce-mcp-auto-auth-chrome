@@ -5,7 +5,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](#)
 
-A local MCP server that exposes **14 Salesforce tools** (SOQL, SOSL, CRUD, Apex execute, tooling API, REST) inside Claude Desktop — and **auto-refreshes the session from your Chrome browser** so you never have to paste a token into your config again. Wraps [`mcp-salesforce-connector`](https://pypi.org/project/mcp-salesforce-connector/) on PyPI; runs as a stdio MCP launched per-org by Claude Desktop.
+A local MCP server that exposes **16 Salesforce tools** (SOQL, SOSL, CRUD, Apex execute, tooling API, REST, plus two browser-owned account reads) inside Claude Desktop — and **auto-refreshes the session from your Chrome browser** so you never have to paste a token into your config again. Wraps [`mcp-salesforce-connector`](https://pypi.org/project/mcp-salesforce-connector/) on PyPI; runs as a stdio MCP launched per-org by Claude Desktop.
 
 No connected app, no OAuth dance, no copy-pasting session ids — just stay logged into the org in Chrome.
 
@@ -28,12 +28,36 @@ The package is a thin Python shim around `mcp-salesforce-connector`. On every AP
 
 ## Files in this repo
 
-- **`src/salesforce_mcp_auto_auth_chrome/__main__.py`** — entry point. Reads `SALESFORCE_INSTANCE_URL` from env, seeds a placeholder access token, installs the per-call patch, and hands off to `mcp-salesforce-connector`.
-- **`src/salesforce_mcp_auto_auth_chrome/patch.py`** — monkey-patches `simple_salesforce.Salesforce._call_salesforce` so every API call gets a fresh `sid` from Chrome.
-- **`src/salesforce_mcp_auto_auth_chrome/auth.py`** — reads the `sid` cookie from Chrome via `pycookiecheat`. Returns `None` on any failure so callers can defer the error to tool-call time.
+### Source (`src/salesforce_mcp_auto_auth_chrome/`)
+
+- **`__main__.py`** — entry point. Reads `SALESFORCE_INSTANCE_URL` from env (optional), parses `SALESFORCE_BROWSERS` / `SALESFORCE_PROFILES` (`parse_env`), resolves the org via `orgs.resolve_session`, installs the per-call patch, and hands off to `mcp-salesforce-connector`.
+- **`patch.py`** — monkey-patches `simple_salesforce.Salesforce._call_salesforce` so every API call gets a fresh `sid`. Includes upstream-signature self-check and 401/expired-session retry.
+- **`models.py`** — leaf data types shared across the readers: `BrowserConfig`, `CookieSource`, and the `CookieReader` interface. Standard library only, so it breaks the registry ↔ reader import cycle.
+- **`cookies.py`** — sid reading. Walks the browser registry and returns the first valid `sid` for a host (`read_sid` / `read_sid_with_source`). Never raises — failures return `None` so callers defer the error to tool-call time.
+- **`orgs.py`** — org resolution. Auto-discovers logged-in orgs (`discover_orgs`), applies the My-Domain-over-Lightning ranking rule, and picks the session to bind (`resolve_session`) with REST validation.
+- **`auth.py`** — deprecated back-compat surface: re-exports `read_sid` and provides the `read_sid_from_chrome` shim. Nothing in the package imports it anymore; kept for one more release, then removed.
+- **`browsers.py`** — priority-ordered registry of supported browsers (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari) plus the `READERS` dispatch table and `discover_sources`. Callers dispatch through the reader interface, never a `family` switch.
+- **`chromium.py`** — `CookieReader` for Chromium-family browsers: profile discovery plus decryption (AES-128-CBC via `cryptography`, key from macOS Keychain).
+- **`firefox.py`** — `CookieReader` for Firefox: profile discovery plus unencrypted SQLite reads (`moz_cookies`).
+- **`safari.py`** — `CookieReader` for Safari: parses the binary `Cookies.binarycookies` format (requires Full Disk Access).
+- **`instance.py`** — normalizes Lightning URLs (`*.lightning.force.com`) to My Domain (`*.my.salesforce.com`).
+- **`useragent.py`** — resolves a browser-matching `User-Agent` for outgoing API calls (env override → live DevTools probe → pinned fallback).
+- **`browser.py`** — runs two fixed read-only account workflows in a managed background tab through OpenCLI. The browser owns cookies and security headers; host and user identity must match before a data read runs.
+- **`browser_contracts.py`** — loads the sanitized request fixture and fails closed on response, grid-header, or record-shape drift.
+- **`browser_tools.py`** — adds the typed pipeline and activity tools without exposing arbitrary URLs, JavaScript, fields, or SOQL.
+- **`contracts/browser_requests.v1.json`** — value-free browser request contract: method, templated path, query keys, header names, credential mode, and response shape only.
+- **`browser_only.py`** — second entry point (`salesforce-mcp-browser-only`). Serves only the four browser-owned reads, with no `sid` read, exported, or accepted. Requires `SALESFORCE_INSTANCE_URL` and exits non-zero if it is missing or not a Salesforce host.
+- **`session_status.py`** — resolves and validates browser-owned session, then prints only `{"state":"active"}` or `{"state":"inactive"}` for local health indicators. It never outputs SID, host, browser/profile, or user identity.
+- **`validate.py`** — validates a candidate `sid` against the Salesforce REST API (`/services/oauth2/userinfo`).
+- **`utils.py`** — shared reader helpers: longest-suffix host matching and the temp-copy SQLite cookie query used by the Chromium/Firefox readers.
+
+### Other
+
 - **`pyproject.toml`** — package metadata + entry point. `uvx` reads this when launching.
 - **`examples/claude_desktop_config.example.json`** — copy-paste-ready Claude Desktop config snippet.
 - **`docs/how-it-works.md`** — full architecture write-up with the design decisions, what we tried and discarded, and the lessons that generalize to other MCP wrappers.
+- **`scripts/smoke.py`** — end-to-end smoke test against a live org.
+- **`tests/`** — pytest suite covering every module (browsers, chromium, firefox, safari, cookies, instance, validate, patch, auth).
 
 ---
 
@@ -106,9 +130,41 @@ Sign back in and the next tool call works again — no need to restart Claude De
 
 ---
 
-## The 14 tools
+## The 18 tools
 
-All 14 come from the underlying [`mcp-salesforce-connector`](https://pypi.org/project/mcp-salesforce-connector/) — this package just adds auto-auth on top.
+Fourteen come from the underlying [`mcp-salesforce-connector`](https://pypi.org/project/mcp-salesforce-connector/). This package adds four narrow browser-owned reads for account dashboards.
+
+### Browser-owned account reads (4)
+
+| Tool | Purpose |
+| --- | --- |
+| `browser_search_ownership` | Search fixed Account, Contact, and Lead ownership fields through native Salesforce search |
+| `browser_get_account_pipeline` | Read 14 fixed Opportunity fields, including amount, expected revenue, size, term, and lease type, through Salesforce UI API |
+| `browser_get_account_activities` | Read Subject, Status/date, and assignee from native Open Activities and Activity History grids |
+| `browser_get_accounts_context` | Read fixed pipeline and activity context for up to 10 Accounts in one validated managed session |
+
+These tools require a connected [OpenCLI](https://github.com/jackwener/opencli) Browser Bridge profile. Runtime creates one managed background tab, compares its Salesforce host and user ID with the resolved cookie session, and serializes fixed read operations through that session. Cookie values, `Authorization`, request bodies, arbitrary URLs, JavaScript, and caller-supplied SOQL never enter tool schemas or results.
+
+**Want only these four tools?** The package also ships a second entry point, `salesforce-mcp-browser-only`, which serves the browser-owned reads and nothing else — no SOQL, no writes, and no `sid` read or exported at any point. It requires `SALESFORCE_INSTANCE_URL` (it will not auto-discover) and fails closed if that URL is missing or is not a Salesforce host:
+
+```jsonc
+{
+  "command": "uvx",
+  "args": ["--from", "salesforce-mcp-auto-auth-chrome", "salesforce-mcp-browser-only"],
+  "env": { "SALESFORCE_INSTANCE_URL": "https://yourdomain.my.salesforce.com" }
+}
+```
+
+**Known limitations of the browser-owned reads:**
+
+- `browser_get_account_pipeline` requests four custom Opportunity fields
+  (`Size__c`, `Size_Type__c`, `Term_Months__c`, `Lease_Type__c`). An org that
+  does not define all four has the whole related-list request rejected as an
+  invalid-field error. Capability detection is tracked as a follow-up issue.
+- `browser_search_ownership` identifies the result grids by their English
+  column labels (`Account Name`, `Contact Name`, `Lead Name`), so an org whose
+  UI language is not English silently returns no matches. Locale-independent
+  detection is tracked as a follow-up issue.
 
 ### Query (2)
 
@@ -215,7 +271,7 @@ SALESFORCE_INSTANCE_URL=https://yourdomain.my.salesforce.com \
   uv run python -m salesforce_mcp_auto_auth_chrome
 ```
 
-The process will start, print `[salesforce-mcp-auto-auth-chrome v0.1.1] Ready for ...`, and wait for MCP JSON-RPC on stdin.
+The process will start, print `[salesforce-mcp-auto-auth-chrome v0.2.0] Ready for ...`, and wait for MCP JSON-RPC on stdin.
 
 To point your local Claude Desktop config at the working copy instead of the published repo, change the args to:
 
@@ -249,7 +305,7 @@ Every API call. The `sid` from Chrome is read fresh each time — Salesforce ses
 
 ## Troubleshooting
 
-**Claude shows "Server disconnected" at startup**: Almost always means the wrapper failed to import something — usually `pycookiecheat` or `mcp-salesforce-connector`. Look at `~/Library/Logs/Claude/mcp-server-<name>.log` for the actual Python traceback. Most fixes are a `uvx --reinstall` or running `uv sync` if you're working from a local clone.
+**Claude shows "Server disconnected" at startup**: Almost always means the wrapper failed to import something — usually `cryptography` or `mcp-salesforce-connector`. Look at `~/Library/Logs/Claude/mcp-server-<name>.log` for the actual Python traceback. Most fixes are a `uvx --reinstall` or running `uv sync` if you're working from a local clone.
 
 **All Salesforce MCPs disconnect at once, log shows `AttributeError: 'Server' object has no attribute 'list_tools'`**: This means `uvx` resolved the `mcp` Python SDK to **2.0.0 or later**, which removed the low-level `Server.list_tools()` decorator that `mcp-salesforce-connector` (the upstream package we wrap) still uses. **Fixed in v0.1.1+** — this package now pins `mcp<2.0` at install time. If you're on an older version, either upgrade (`uvx --reinstall salesforce-mcp-auto-auth-chrome`) or add `--with "mcp<2"` to your `uvx` args as an immediate workaround:
 
@@ -257,7 +313,11 @@ Every API call. The `sid` from Chrome is read fresh each time — Salesforce ses
 "args": ["--with", "mcp<2", "salesforce-mcp-auto-auth-chrome"]
 ```
 
-**`Not logged into Salesforce in Chrome for ...`** in chat: The wrapper couldn't find a `sid` cookie for the configured instance URL. Open that org in Chrome, sign in, then retry your Claude request. No Claude restart needed — the next tool call reads cookies fresh.
+**`Not logged into Salesforce in any supported browser for ...`** in chat: The wrapper couldn't find a `sid` cookie for the configured instance URL. Open that org in any supported browser, sign in, then retry your Claude request. No Claude restart needed — the next tool call reads cookies fresh.
+
+**`SALESFORCE_INSTANCE_URL` is optional**: If you omit it, the wrapper auto-discovers a logged-in org by scanning your browser cookies and validating each candidate `sid` against the REST API. Set it to pin a specific org. You can pass either a My Domain URL (`https://acme.my.salesforce.com`) **or** a Lightning URL (`https://acme.lightning.force.com`) — Lightning URLs are normalized to the My Domain host automatically.
+
+**`INVALID_SESSION_ID` on every call**: Usually means a Lightning-domain `sid` was used against the REST API — they're different cookies. The wrapper avoids this by always normalizing to the My Domain host and (during auto-discovery) validating sids before use, so make sure you're on a recent version.
 
 **Keychain prompt keeps appearing**: The first time the wrapper reads cookies, macOS asks permission to access "Chrome Safe Storage" via Keychain. Click **Always Allow** — not "Allow" — and the prompt won't return.
 
@@ -265,15 +325,26 @@ Every API call. The `sid` from Chrome is read fresh each time — Salesforce ses
 
 **`HTTP 401` from Salesforce on every call**: The `sid` cookie you have is valid for the UI session but the org may have "Lock sessions to the IP address from which they originated" enabled with a strict policy. If so, switch that org to OAuth-based auth via the standard `mcp-salesforce-connector` config.
 
-**Want to use Firefox/Safari/Brave/Arc instead of Chrome**: Not yet — today the wrapper only checks Chrome's cookie store. Adding other browsers is a small change to `auth.py` (pycookiecheat supports several). PRs welcome.
+**Want to use a browser other than Chrome**: Supported out of the box. By default the wrapper scans Chrome, Comet, Arc, Edge, Brave, and Safari — and every profile in each — and uses the first org session it finds. No config needed. **Firefox is opt-in**: it's excluded from the default scan; enable it by naming `firefox` in `SALESFORCE_BROWSERS`.
+
+Restrict or reorder the search with optional env vars in your Claude Desktop config:
+
+- `SALESFORCE_BROWSERS` — comma-separated browser keys, in priority order. Keys: `chrome`, `comet`, `arc`, `edge`, `brave`, `firefox`, `safari`. Example: `"SALESFORCE_BROWSERS": "comet, chrome"`. This is also how you opt into Firefox — e.g. `"SALESFORCE_BROWSERS": "firefox, chrome"`.
+- `SALESFORCE_SKIP_BROWSERS` — comma-separated browser keys to exclude, applied after the allowlist. Use it to skip probing a browser without listing every other one — e.g. `"SALESFORCE_SKIP_BROWSERS": "safari"` scans every default browser except Safari.
+- `SALESFORCE_PROFILES` — comma-separated profile names to limit to (e.g. `"Default, Profile 1"`). Applies across all selected browsers.
+- `SALESFORCE_OPENCLI_BIN` — optional absolute path to the OpenCLI binary used by the two `browser_` tools. Resolution order is this variable, `~/bin/opencli`, then `PATH`.
+- `SALESFORCE_OPENCLI_PROFILE` — optional connected OpenCLI Browser Bridge profile ID. Required only when more than one connected profile could satisfy a browser-owned call.
+
+**Safari note**: reading Safari cookies requires **Full Disk Access** for the app that launches the MCP server (Claude Desktop or your terminal). Grant it in System Settings → Privacy & Security → Full Disk Access. Without it, Safari is silently skipped and other browsers are still used.
 
 **Cookie reads work in Chrome standalone but the MCP can't read them**: The MCP process needs permission to access Keychain. If you ever click "Don't Allow" on the Keychain prompt by accident, open Keychain Access → search for "Chrome Safe Storage" → right-click → "Get Info" → "Access Control" → add the `uv` executable, or just delete the entry and let Chrome recreate it.
 
-**Want to see what the wrapper is doing?**: Logs go to stderr, which Claude Desktop captures at `~/Library/Logs/Claude/mcp-server-<name>.log`. The wrapper prints `[salesforce-mcp-auto-auth-chrome v0.1.1] Ready for ...` at startup and `cookie read failed: ...` on individual failures.
+**Want to see what the wrapper is doing?**: Logs go to stderr, which Claude Desktop captures at `~/Library/Logs/Claude/mcp-server-<name>.log`. The wrapper prints `[salesforce-mcp-auto-auth-chrome v0.2.0] Ready for ...` at startup and `cookie read failed: ...` on individual failures.
 
 ---
 
 ## Version history
 
+- **v0.2.0 (unreleased)** — multi-browser, multi-profile `sid` lookup (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari). Native cookie decryption via `cryptography` (replaces `pycookiecheat`). New `SALESFORCE_BROWSERS` / `SALESFORCE_PROFILES` env vars. Lightning→My Domain URL normalization; `SALESFORCE_INSTANCE_URL` now optional with REST-validated org auto-discovery. Per-call sid refresh pinned to the resolved profile, with 401/expired-session retry and an upstream-signature self-check. Browser-owned read tools and the `salesforce-mcp-browser-only` entry point. End-to-end smoke test at `scripts/smoke.py`. macOS-only.
 - **v0.1.1** — pin `mcp<2.0` at install time. The `mcp` Python SDK shipped 2.0.0 on 2026-07-28, removing the low-level `Server.list_tools()` decorator that `mcp-salesforce-connector` 0.1.15 relies on. Before this pin, every fresh `uvx` resolution crashed at import with `AttributeError: 'Server' object has no attribute 'list_tools'`. No functional changes — this is purely a dependency guard until the upstream connector is ported to the 2.x API.
 - **v0.1.0** — initial release on PyPI. 14 tools (via mcp-salesforce-connector 0.1.15). Chrome-only, macOS-only, per-call `sid` refresh.

@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Architecture review — salesforce-mcp-auto-auth-chrome</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 5 4; }
+      .leak { stroke: #dc2626; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .schematic { font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; }
+      .card-accent { border-left: 3px solid #f97316; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans antialiased">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-14">
+
+      <!-- ───────────────────────── HEADER ───────────────────────── -->
+      <header class="space-y-5">
+        <p class="schematic text-orange-600 font-semibold">Architecture review</p>
+        <h1 class="text-4xl font-bold tracking-tight">salesforce-mcp-auto-auth-chrome</h1>
+        <p class="text-slate-600 max-w-3xl leading-relaxed">
+          The package is small and mostly healthy — <span class="mono text-sm">patch.py</span>,
+          <span class="mono text-sm">utils.py</span>, and <span class="mono text-sm">instance.py</span>
+          are already <strong>deep</strong> modules: a simple interface hiding real work. The friction
+          is concentrated in one place — the <strong>seam</strong> between the cookie
+          <strong>orchestrator</strong> and the per-browser readers, which is held together by a
+          stringly-typed <span class="mono text-sm">family</span> tag matched in three separate switch
+          statements across two modules. Below are four <strong>deepening</strong> opportunities, ranked.
+        </p>
+
+        <!-- legend -->
+        <div class="flex flex-wrap gap-x-8 gap-y-3 pt-3 text-sm">
+          <span class="flex items-center gap-2">
+            <svg width="34" height="20"><rect x="1" y="3" width="32" height="14" rx="2" fill="#fff" stroke="#334155" stroke-width="1.5"/></svg>
+            module
+          </span>
+          <span class="flex items-center gap-2">
+            <svg width="34" height="20"><line x1="1" y1="10" x2="33" y2="10" stroke="#334155" stroke-width="1.5" class="seam"/></svg>
+            seam
+          </span>
+          <span class="flex items-center gap-2">
+            <svg width="34" height="20"><line x1="1" y1="10" x2="27" y2="10" stroke="#dc2626" stroke-width="1.5"/><path d="M27 6 l6 4 l-6 4 z" fill="#dc2626"/></svg>
+            leakage
+          </span>
+          <span class="flex items-center gap-2">
+            <svg width="34" height="20"><rect x="1" y="3" width="32" height="14" rx="2" fill="#0f172a"/></svg>
+            deep module
+          </span>
+        </div>
+
+        <!-- dependency map -->
+        <div class="pt-6">
+          <p class="schematic text-slate-400 mb-2">Current module dependency map</p>
+          <div class="bg-white rounded-lg border border-slate-200 p-4 overflow-x-auto">
+            <pre class="mermaid">
+flowchart TD
+    main["__main__"] --> cookies
+    main --> patch
+    patch --> auth["auth (shim)"]
+    patch --> useragent
+    auth --> cookies
+    cookies --> browsers
+    cookies --> instance
+    cookies --> validate
+    cookies --> chromium
+    cookies --> firefox
+    cookies --> safari
+    browsers -. "family ==" .-> chromium
+    browsers -. "family ==" .-> firefox
+    browsers -. "family ==" .-> safari
+    chromium --> utils
+    firefox --> utils
+    safari --> utils
+    chromium --> instance
+    firefox --> instance
+    safari --> instance
+    classDef deep fill:#0f172a,color:#fff,stroke:#0f172a;
+    classDef shim fill:#fef3c7,stroke:#d97706,color:#78350f;
+    class patch,utils,instance deep;
+    class auth shim;
+            </pre>
+          </div>
+          <p class="text-xs text-slate-500 mt-2">
+            <span class="mono">cookies</span> depends on all three readers <em>and</em> re-implements the same
+            <span class="mono">family</span> dispatch that <span class="mono">browsers</span> already does.
+            <span class="mono">auth</span> is a pass-through hop into <span class="mono">cookies</span>.
+          </p>
+        </div>
+      </header>
+
+      <!-- ───────────────────────── CANDIDATES ───────────────────────── -->
+      <section id="candidates" class="space-y-12">
+        <h2 class="text-2xl font-bold tracking-tight border-b border-slate-200 pb-2">Candidates</h2>
+
+        <!-- ========== CANDIDATE 1 ========== -->
+        <article id="c1" class="bg-white rounded-xl border border-slate-200 shadow-sm p-7 space-y-6 card-accent">
+          <div class="space-y-2">
+            <div class="flex flex-wrap items-center gap-3">
+              <h3 class="text-xl font-semibold">1 · One seam per browser family</h3>
+              <span class="px-2.5 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold">Strong</span>
+              <span class="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs font-medium">stringly-typed dispatch</span>
+            </div>
+            <p class="mono text-xs text-slate-500">cookies.py · browsers.py · chromium.py · firefox.py · safari.py</p>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="text-sm space-y-1.5">
+              <p><span class="schematic text-slate-400">Problem</span></p>
+              <p class="text-slate-700 leading-relaxed">
+                The <span class="mono">family</span> string is matched in <strong>three</strong> switch statements
+                across two modules: profile discovery in <span class="mono">browsers.discover_sources</span>, and
+                <em>both</em> <span class="mono">cookies._read_from_source</span> and
+                <span class="mono">cookies._list_sids_from_source</span>. Adding a browser family means editing three
+                switches plus a reader module — the "what a family can do" knowledge is smeared across the codebase.
+              </p>
+            </div>
+            <div class="text-sm space-y-1.5">
+              <p><span class="schematic text-slate-400">Solution</span></p>
+              <p class="text-slate-700 leading-relaxed">
+                Give each family a <strong>reader adapter</strong> with one <strong>interface</strong> —
+                <span class="mono">discover(cfg)</span>, <span class="mono">read(source, host, name)</span>,
+                <span class="mono">list_sids(source)</span> — and attach it to the registry entry. The three switches
+                collapse to one registry lookup; each reader becomes a <strong>deep</strong> module owning its family.
+              </p>
+            </div>
+          </div>
+
+          <!-- before / after -->
+          <div class="grid md:grid-cols-2 gap-5 pt-2">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="schematic text-slate-400 mb-3">Before — dispatch smeared ×3</p>
+              <svg viewBox="0 0 320 300" class="w-full" style="max-height:300px">
+                <!-- callers -->
+                <rect x="20" y="10" width="130" height="34" rx="3" fill="#fff" stroke="#334155" stroke-width="1.5"/>
+                <text x="85" y="31" text-anchor="middle" class="mono" font-size="11">browsers.discover</text>
+                <rect x="170" y="10" width="130" height="34" rx="3" fill="#fff" stroke="#334155" stroke-width="1.5"/>
+                <text x="235" y="26" text-anchor="middle" class="mono" font-size="10">cookies._read /</text>
+                <text x="235" y="38" text-anchor="middle" class="mono" font-size="10">_list_sids ×2</text>
+                <!-- switch diamonds -->
+                <text x="160" y="70" text-anchor="middle" class="schematic" fill="#dc2626" font-size="9">family == "…"  ×3</text>
+                <!-- leakage arrows to each reader -->
+                <line x1="85" y1="44" x2="70" y2="120" stroke="#dc2626" stroke-width="1.3"/><path d="M67 116 l3 8 l6 -5 z" fill="#dc2626"/>
+                <line x1="230" y1="44" x2="160" y2="120" stroke="#dc2626" stroke-width="1.3"/><path d="M157 116 l4 7 l5 -6 z" fill="#dc2626"/>
+                <line x1="235" y1="44" x2="250" y2="120" stroke="#dc2626" stroke-width="1.3"/><path d="M252 116 l-4 7 l8 1 z" fill="#dc2626"/>
+                <line x1="90" y1="44" x2="245" y2="120" stroke="#dc2626" stroke-width="1.3"/>
+                <!-- readers -->
+                <rect x="20" y="130" width="85" height="30" rx="3" fill="#fff" stroke="#334155" stroke-width="1.5"/>
+                <text x="62" y="149" text-anchor="middle" class="mono" font-size="10">chromium</text>
+                <rect x="118" y="130" width="85" height="30" rx="3" fill="#fff" stroke="#334155" stroke-width="1.5"/>
+                <text x="160" y="149" text-anchor="middle" class="mono" font-size="10">firefox</text>
+                <rect x="216" y="130" width="85" height="30" rx="3" fill="#fff" stroke="#334155" stroke-width="1.5"/>
+                <text x="258" y="149" text-anchor="middle" class="mono" font-size="10">safari</text>
+                <text x="160" y="200" text-anchor="middle" fill="#dc2626" font-size="10">every reader knows 2 entry-point shapes</text>
+                <text x="160" y="220" text-anchor="middle" fill="#64748b" font-size="10">tests monkeypatch reader names on cookies</text>
+              </svg>
+            </div>
+            <div class="rounded-lg border border-slate-800 deep p-4">
+              <p class="schematic text-slate-400 mb-3">After — one adapter interface</p>
+              <svg viewBox="0 0 320 300" class="w-full" style="max-height:300px">
+                <rect x="95" y="12" width="130" height="34" rx="3" fill="#fff" stroke="#94a3b8" stroke-width="1.5"/>
+                <text x="160" y="33" text-anchor="middle" class="mono" font-size="11" fill="#0f172a">registry lookup</text>
+                <!-- single seam -->
+                <line x1="160" y1="46" x2="160" y2="86" stroke="#e2e8f0" stroke-width="1.5" class="seam"/>
+                <text x="205" y="70" fill="#94a3b8" class="schematic" font-size="8">CookieReader</text>
+                <rect x="60" y="88" width="200" height="24" rx="3" fill="none" stroke="#f97316" stroke-width="1.3" stroke-dasharray="5 4"/>
+                <text x="160" y="104" text-anchor="middle" fill="#fdba74" class="mono" font-size="9">discover · read · list_sids</text>
+                <!-- deep readers -->
+                <rect x="20" y="135" width="85" height="34" rx="3" fill="#1e293b" stroke="#475569"/>
+                <text x="62" y="156" text-anchor="middle" class="mono" font-size="10" fill="#e2e8f0">Chromium</text>
+                <rect x="118" y="135" width="85" height="34" rx="3" fill="#1e293b" stroke="#475569"/>
+                <text x="160" y="156" text-anchor="middle" class="mono" font-size="10" fill="#e2e8f0">Firefox</text>
+                <rect x="216" y="135" width="85" height="34" rx="3" fill="#1e293b" stroke="#475569"/>
+                <text x="258" y="156" text-anchor="middle" class="mono" font-size="10" fill="#e2e8f0">Safari</text>
+                <line x1="120" y1="112" x2="70" y2="135" stroke="#64748b" stroke-width="1.2"/>
+                <line x1="160" y1="112" x2="160" y2="135" stroke="#64748b" stroke-width="1.2"/>
+                <line x1="200" y1="112" x2="255" y2="135" stroke="#64748b" stroke-width="1.2"/>
+                <text x="160" y="205" text-anchor="middle" fill="#94a3b8" font-size="10">add a family = add one adapter</text>
+                <text x="160" y="225" text-anchor="middle" fill="#64748b" font-size="10">tests exercise the interface, not names</text>
+              </svg>
+            </div>
+          </div>
+
+          <div>
+            <p class="schematic text-slate-400 mb-2">Wins</p>
+            <ul class="grid sm:grid-cols-2 gap-x-8 gap-y-1.5 text-sm text-slate-700 list-disc list-inside">
+              <li>Three switches → one lookup</li>
+              <li>Per-family knowledge in one place</li>
+              <li>New browser = one file, zero edits</li>
+              <li>Tests target interface, not internals</li>
+              <li>AI-navigable: family = module</li>
+              <li>Locality of dispatch restored</li>
+            </ul>
+          </div>
+
+          <div class="text-sm bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+            <span class="font-semibold text-emerald-800">Deletion test —</span>
+            <span class="text-emerald-900">deleting the three switches forces the dispatch into one registry lookup: complexity <strong>concentrates</strong>, it doesn't just move. Strong signal.</span>
+          </div>
+        </article>
+
+        <!-- ========== CANDIDATE 2 ========== -->
+        <article id="c2" class="bg-white rounded-xl border border-slate-200 shadow-sm p-7 space-y-6">
+          <div class="space-y-2">
+            <div class="flex flex-wrap items-center gap-3">
+              <h3 class="text-xl font-semibold">2 · Split reading from resolution in <span class="mono text-base">cookies.py</span></h3>
+              <span class="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold">Worth exploring</span>
+              <span class="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs font-medium">god module</span>
+            </div>
+            <p class="mono text-xs text-slate-500">cookies.py → (readers) + orgs.py</p>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="text-sm space-y-1.5">
+              <p><span class="schematic text-slate-400">Problem</span></p>
+              <p class="text-slate-700 leading-relaxed">
+                <span class="mono">cookies.py</span> carries five unrelated responsibilities: read one sid, read a sid
+                with source, discover orgs, resolve the session (with the subtle primary-vs-Lightning ranking heuristic),
+                and parse env vars. Understanding "how is the org chosen" means wading past cookie plumbing; the ranking
+                domain rule hides inside a loop.
+              </p>
+            </div>
+            <div class="text-sm space-y-1.5">
+              <p><span class="schematic text-slate-400">Solution</span></p>
+              <p class="text-slate-700 leading-relaxed">
+                Leave sid <em>reading</em> behind the reader seam (candidate 1) and lift org <em>resolution</em> —
+                <span class="mono">discover_orgs</span>, <span class="mono">resolve_session</span>, and the
+                primary/derived ranking — into an <span class="mono">orgs.py</span> module. Move
+                <span class="mono">parse_env</span> to config/<span class="mono">__main__</span> where its callers live.
+              </p>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-5 pt-2">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <p class="schematic text-slate-400 mb-3">Before — one module, five jobs</p>
+              <svg viewBox="0 0 300 250" class="w-full" style="max-height:250px">
+                <rect x="30" y="15" width="240" height="215" rx="4" fill="#fff" stroke="#334155" stroke-width="1.5"/>
+                <text x="150" y="35" text-anchor="middle" class="mono" font-size="12" font-weight="bold">cookies.py</text>
+                <rect x="50" y="52" width="200" height="26" rx="3" fill="#eff6ff" stroke="#93c5fd"/>
+                <text x="150" y="69" text-anchor="middle" class="mono" font-size="10">read_sid / _with_source</text>
+                <rect x="50" y="86" width="200" height="26" rx="3" fill="#fef2f2" stroke="#fca5a5"/>
+                <text x="150" y="103" text-anchor="middle" class="mono" font-size="10">discover_orgs</text>
+                <rect x="50" y="120" width="200" height="26" rx="3" fill="#fef2f2" stroke="#fca5a5"/>
+                <text x="150" y="137" text-anchor="middle" class="mono" font-size="10">resolve_session + ranking</text>
+                <rect x="50" y="154" width="200" height="26" rx="3" fill="#fffbeb" stroke="#fcd34d"/>
+                <text x="150" y="171" text-anchor="middle" class="mono" font-size="10">parse_env</text>
+                <text x="150" y="205" text-anchor="middle" fill="#dc2626" font-size="10">reading · resolving · config parsing</text>
+                <text x="150" y="221" text-anchor="middle" fill="#64748b" font-size="9">3 concerns, 1 file</text>
+              </svg>
+            </div>
+            <div class="rounded-lg border border-slate-800 deep p-4">
+              <p class="schematic text-slate-400 mb-3">After — split by concern</p>
+              <svg viewBox="0 0 300 250" class="w-full" style="max-height:250px">
+                <rect x="20" y="30" width="120" height="70" rx="4" fill="#1e293b" stroke="#475569"/>
+                <text x="80" y="58" text-anchor="middle" class="mono" font-size="11" fill="#e2e8f0">reader seam</text>
+                <text x="80" y="74" text-anchor="middle" font-size="9" fill="#94a3b8">read one sid</text>
+                <rect x="160" y="30" width="120" height="70" rx="4" fill="#1e293b" stroke="#475569"/>
+                <text x="220" y="52" text-anchor="middle" class="mono" font-size="11" fill="#e2e8f0">orgs.py</text>
+                <text x="220" y="68" text-anchor="middle" font-size="9" fill="#94a3b8">discover · resolve</text>
+                <text x="220" y="82" text-anchor="middle" font-size="9" fill="#94a3b8">+ ranking rule</text>
+                <line x1="220" y1="100" x2="80" y2="30" stroke="#64748b" stroke-width="1.2"/>
+                <rect x="90" y="150" width="120" height="46" rx="4" fill="#fff" stroke="#94a3b8"/>
+                <text x="150" y="170" text-anchor="middle" class="mono" font-size="10" fill="#0f172a">__main__ / config</text>
+                <text x="150" y="185" text-anchor="middle" font-size="9" fill="#64748b">parse_env</text>
+                <text x="150" y="225" text-anchor="middle" fill="#94a3b8" font-size="10">each module = one reason to change</text>
+              </svg>
+            </div>
+          </div>
+
+          <div>
+            <p class="schematic text-slate-400 mb-2">Wins</p>
+            <ul class="grid sm:grid-cols-2 gap-x-8 gap-y-1.5 text-sm text-slate-700 list-disc list-inside">
+              <li>Ranking rule gets a home + a name</li>
+              <li>Resolution testable without readers</li>
+              <li>Config parsing near its caller</li>
+              <li>Smaller modules, clearer intent</li>
+            </ul>
+          </div>
+          <p class="text-xs text-slate-500">Pairs naturally with candidate 1 — do the seam first, then this split is mechanical.</p>
+        </article>
+
+        <!-- ========== CANDIDATE 3 ========== -->
+        <article id="c3" class="bg-white rounded-xl border border-slate-200 shadow-sm p-7 space-y-6">
+          <div class="space-y-2">
+            <div class="flex flex-wrap items-center gap-3">
+              <h3 class="text-xl font-semibold">3 · Shed the <span class="mono text-base">auth.py</span> hop</h3>
+              <span class="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold">Worth exploring</span>
+              <span class="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs font-medium">shallow indirection</span>
+            </div>
+            <p class="mono text-xs text-slate-500">auth.py · patch.py</p>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="text-sm space-y-1.5">
+              <p><span class="schematic text-slate-400">Problem</span></p>
+              <p class="text-slate-700 leading-relaxed">
+                <span class="mono">auth.py</span> is a whole module that re-exports <span class="mono">read_sid</span>
+                and wraps one deprecated shim already scheduled for removal. <span class="mono">patch.py</span> imports
+                <span class="mono">read_sid</span> <em>through</em> it, so every call threads
+                <span class="mono">patch → auth → cookies</span> for no <strong>leverage</strong>.
+              </p>
+            </div>
+            <div class="text-sm space-y-1.5">
+              <p><span class="schematic text-slate-400">Solution</span></p>
+              <p class="text-slate-700 leading-relaxed">
+                Point <span class="mono">patch.py</span> at <span class="mono">cookies.read_sid</span> directly and
+                retire the shim on its announced schedule. The seam disappears; nothing is deepened because there was
+                never any depth behind it.
+              </p>
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+            <svg viewBox="0 0 620 90" class="w-full" style="max-height:90px">
+              <!-- before -->
+              <text x="10" y="18" class="schematic" fill="#94a3b8">before</text>
+              <rect x="10" y="28" width="80" height="30" rx="3" fill="#fff" stroke="#334155" stroke-width="1.5"/>
+              <text x="50" y="47" text-anchor="middle" class="mono" font-size="10">patch</text>
+              <line x1="90" y1="43" x2="126" y2="43" stroke="#dc2626" stroke-width="1.4"/><path d="M126 39 l7 4 l-7 4 z" fill="#dc2626"/>
+              <rect x="135" y="28" width="80" height="30" rx="3" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
+              <text x="175" y="47" text-anchor="middle" class="mono" font-size="10">auth shim</text>
+              <line x1="215" y1="43" x2="251" y2="43" stroke="#334155" stroke-width="1.4"/><path d="M251 39 l7 4 l-7 4 z" fill="#334155"/>
+              <rect x="260" y="28" width="80" height="30" rx="3" fill="#fff" stroke="#334155" stroke-width="1.5"/>
+              <text x="300" y="47" text-anchor="middle" class="mono" font-size="10">cookies</text>
+              <!-- after -->
+              <text x="390" y="18" class="schematic" fill="#94a3b8">after</text>
+              <rect x="390" y="28" width="80" height="30" rx="3" fill="#0f172a"/>
+              <text x="430" y="47" text-anchor="middle" class="mono" font-size="10" fill="#fff">patch</text>
+              <line x1="470" y1="43" x2="516" y2="43" stroke="#334155" stroke-width="1.4"/><path d="M516 39 l7 4 l-7 4 z" fill="#334155"/>
+              <rect x="525" y="28" width="80" height="30" rx="3" fill="#fff" stroke="#334155" stroke-width="1.5"/>
+              <text x="565" y="47" text-anchor="middle" class="mono" font-size="10">cookies</text>
+              <text x="565" y="78" text-anchor="middle" fill="#94a3b8" font-size="9">one hop gone</text>
+            </svg>
+          </div>
+
+          <div>
+            <p class="schematic text-slate-400 mb-2">Wins</p>
+            <ul class="grid sm:grid-cols-2 gap-x-8 gap-y-1.5 text-sm text-slate-700 list-disc list-inside">
+              <li>One fewer module to trace</li>
+              <li>Import path matches reality</li>
+              <li>Deletes dead deprecation surface</li>
+              <li>No behaviour change</li>
+            </ul>
+          </div>
+          <div class="text-sm bg-amber-50 border border-amber-200 rounded-lg p-3 text-amber-900">
+            <span class="font-semibold">Note —</span> <span class="mono">read_sid_from_chrome</span> is public API with a
+            deprecation warning; honour the "next minor release" timeline before deleting. An ADR is only worth writing if
+            you decide to <em>keep</em> the shim longer than announced.
+          </div>
+        </article>
+
+        <!-- ========== CANDIDATE 4 ========== -->
+        <article id="c4" class="bg-white rounded-xl border border-slate-200 shadow-sm p-7 space-y-6">
+          <div class="space-y-2">
+            <div class="flex flex-wrap items-center gap-3">
+              <h3 class="text-xl font-semibold">4 · Fold the <span class="mono text-base">read_sid</span> wrapper</h3>
+              <span class="px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-700 text-xs font-semibold">Speculative</span>
+              <span class="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs font-medium">shallow wrapper</span>
+            </div>
+            <p class="mono text-xs text-slate-500">cookies.py</p>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="text-sm space-y-1.5">
+              <p><span class="schematic text-slate-400">Problem</span></p>
+              <p class="text-slate-700 leading-relaxed">
+                <span class="mono">read_sid</span> is <span class="mono">read_sid_with_source(...)[0]</span> — a
+                <strong>shallow</strong> module whose interface is nearly its whole implementation. Two names for one
+                behaviour is a small navigation tax.
+              </p>
+            </div>
+            <div class="text-sm space-y-1.5">
+              <p><span class="schematic text-slate-400">Solution</span></p>
+              <p class="text-slate-700 leading-relaxed">
+                Make the sourced form the single public entry point and let the two <span class="mono">patch.py</span>
+                call sites take <span class="mono">.sid</span> themselves — or keep <span class="mono">read_sid</span>
+                as the <em>only</em> public one and inline the tuple form. Either way, one name.
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <p class="schematic text-slate-400 mb-2">Wins</p>
+            <ul class="grid sm:grid-cols-2 gap-x-8 gap-y-1.5 text-sm text-slate-700 list-disc list-inside">
+              <li>One reading entry point</li>
+              <li>Slightly smaller interface</li>
+            </ul>
+          </div>
+          <p class="text-xs text-slate-500">
+            Lowest value — the wrapper does earn its keep as a readable call site in <span class="mono">patch._fresh_sid</span>.
+            Only worth touching if candidate 1 is already reshaping this module.
+          </p>
+        </article>
+      </section>
+
+      <!-- ───────────────────────── TOP RECOMMENDATION ───────────────────────── -->
+      <section id="top-recommendation">
+        <h2 class="text-2xl font-bold tracking-tight border-b border-slate-200 pb-2 mb-5">Top recommendation</h2>
+        <div class="rounded-xl deep text-slate-100 p-8 space-y-4 shadow-lg">
+          <div class="flex items-center gap-3">
+            <span class="px-2.5 py-0.5 rounded-full bg-orange-500 text-white text-xs font-semibold">Strong</span>
+            <a href="#c1" class="text-xl font-semibold hover:text-orange-300 transition">1 · One seam per browser family</a>
+          </div>
+          <p class="text-slate-300 leading-relaxed max-w-3xl">
+            This is the only place in the package where complexity is genuinely <strong>smeared</strong> rather than
+            hidden. Collapsing the three <span class="mono text-slate-100">family</span> switches into one reader
+            adapter interface turns three shallow dispatch points into three <strong>deep</strong> modules, restores
+            <strong>locality</strong> (a browser family lives in exactly one file), and lets the tests exercise a real
+            <strong>interface</strong> instead of monkeypatching reader function names onto the
+            <span class="mono text-slate-100">cookies</span> namespace. Candidates 2–4 get easier once this seam exists,
+            so start here.
+          </p>
+          <p class="text-xs text-slate-400">Suggested order: 1 → 2 (mechanical after 1) → 3 (schedule-gated) → 4 (optional).</p>
+        </div>
+      </section>
+
+      <footer class="pt-8 text-xs text-slate-400 border-t border-slate-200">
+        Vocabulary: module · interface · implementation · depth · deep · shallow · seam · adapter · leverage · locality.
+        No <span class="mono">CONTEXT.md</span> or ADRs present — consider seeding the glossary with the good seam names above.
+      </footer>
+    </main>
+  </body>
+</html>

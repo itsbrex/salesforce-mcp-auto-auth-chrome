@@ -27,9 +27,6 @@ venv/
 ENV/
 env/
 
-# uv
-uv.lock
-
 # Editors
 .vscode/
 .idea/
