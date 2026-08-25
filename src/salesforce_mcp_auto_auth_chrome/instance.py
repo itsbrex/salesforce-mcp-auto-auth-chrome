@@ -49,6 +49,18 @@ def normalize_instance_url(url: str) -> str | None:
 
 
 def is_salesforce_host(host: str) -> bool:
-    """True if `host` looks like a Salesforce-served host."""
+    """True if `host` is a Salesforce-served host.
+
+    Matches the bare apex (``salesforce.com``/``force.com``) or any subdomain of
+    it — the leading label separator is required, so a look-alike registered
+    domain such as ``attacker-salesforce.com`` is rejected. Without the dot, a
+    ``sid`` cookie planted on an attacker-controlled ``*-salesforce.com`` host
+    would be classified as Salesforce and could bind the connector to it.
+    """
     h = host.lstrip(".").lower()
-    return h.endswith("salesforce.com") or h.endswith("force.com")
+    return (
+        h == "salesforce.com"
+        or h.endswith(".salesforce.com")
+        or h == "force.com"
+        or h.endswith(".force.com")
+    )

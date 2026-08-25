@@ -100,3 +100,25 @@ def test_resolve_defers_error_for_configured_without_session(monkeypatch):
 
     assert r.instance_url == "https://acme.my.salesforce.com"
     assert r.sid is None
+
+
+def test_resolve_configured_but_logged_out_never_falls_back_to_other_org(
+    monkeypatch,
+):
+    # The configured org has no sid, but a *different* org is logged in and would
+    # validate. A server pinned to org A must not silently bind to org B — that
+    # would send reads and writes to the wrong org. Auto-discovery must not even
+    # run when a URL was configured.
+    monkeypatch.setattr(orgs, "read_sid_with_source", lambda u, b, p: None)
+
+    def _boom(b, p):
+        raise AssertionError("discover_orgs must not run for a configured org")
+
+    monkeypatch.setattr(orgs, "discover_orgs", _boom)
+    monkeypatch.setattr(orgs, "session_is_valid", lambda u, s: True)
+
+    r = orgs.resolve_session("https://acme.my.salesforce.com")
+
+    assert r.instance_url == "https://acme.my.salesforce.com"
+    assert r.sid is None
+    assert (r.browser, r.profile) == (None, None)

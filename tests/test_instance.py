@@ -51,4 +51,16 @@ def test_is_salesforce_host():
     assert is_salesforce_host("acme.my.salesforce.com")
     assert is_salesforce_host(".acme.lightning.force.com")
     assert is_salesforce_host("na139.salesforce.com")
+    assert is_salesforce_host("salesforce.com")
+    assert is_salesforce_host("force.com")
     assert not is_salesforce_host("example.com")
+
+
+def test_is_salesforce_host_rejects_lookalike_suffixes():
+    # A registered domain that merely ends in the Salesforce apex text, without
+    # the label separator, must not be trusted: a `sid` cookie planted there
+    # would otherwise bind the connector to an attacker-controlled host.
+    assert not is_salesforce_host("attacker-salesforce.com")
+    assert not is_salesforce_host("notsalesforce.com")
+    assert not is_salesforce_host("evilforce.com")
+    assert not is_salesforce_host("salesforce.com.evil.com")

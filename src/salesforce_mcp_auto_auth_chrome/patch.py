@@ -61,20 +61,23 @@ class _PatchConfig:
 
 
 def _fresh_sid(cfg: _PatchConfig) -> str | None:
-    """Read a fresh sid: pinned browser/profile first, then the fallback scope.
+    """Read a fresh sid, kept pinned to the browser/profile resolved at startup.
 
     Pinning keeps the token source stable so calls don't drift to another
-    profile holding a stale sid for the same host. Falls back to the
-    user-configured browser/profile set when the pinned source has logged out.
+    profile. Critically, when a source is pinned we do NOT expand the search on
+    a miss: if the pinned profile has logged out while a *different* profile is
+    logged into the same org as another user, broadening the scope would hand
+    that other user's ``sid`` to every connector operation — including writes —
+    running them under the wrong principal and audit identity. A logged-out pin
+    returns ``None`` (pending-login) instead. The unpinned scope is used only
+    when no source was pinned at startup.
     """
     if cfg.pin_browser:
-        sid = read_sid(
+        return read_sid(
             cfg.instance_url,
             [cfg.pin_browser],
             [cfg.pin_profile] if cfg.pin_profile else None,
         )
-        if sid:
-            return sid
     return read_sid(cfg.instance_url, cfg.browsers, cfg.profiles)
 
 

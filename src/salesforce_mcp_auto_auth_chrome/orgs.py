@@ -85,7 +85,7 @@ def discover_orgs(
             if not instance_url:
                 continue
             host = instance_url[len("https://") :]
-            if not host.endswith("salesforce.com"):
+            if not host.endswith(".my.salesforce.com"):
                 continue  # Lightning/VF hosts that didn't map to a My Domain
             key = (instance_url, sid)
             if key in seen:
@@ -93,7 +93,13 @@ def discover_orgs(
             seen.add(key)
             candidate = OrgCandidate(instance_url, sid, source.browser, source.profile)
             bare = host_key.lstrip(".").lower()
-            (primary if bare.endswith("salesforce.com") else derived).append(candidate)
+            # Rank a sid whose cookie was set on a real REST host
+            # (``*.salesforce.com``, the My Domain / classic pod) ahead of one
+            # derived from a ``*.lightning.force.com`` host — the latter carries a
+            # different sid the REST API rejects. The leading dot keeps a
+            # look-alike ``*-salesforce.com`` host out of the primary tier.
+            is_rest_host = bare == "salesforce.com" or bare.endswith(".salesforce.com")
+            (primary if is_rest_host else derived).append(candidate)
     return primary + derived
 
 
@@ -106,10 +112,14 @@ def resolve_session(
 
     Strategy:
 
-    1. If ``configured_url`` is set, normalize it to My Domain and try to read a
-       ``sid`` for it directly (trusted — no network probe), recording which
-       browser/profile it came from.
-    2. Otherwise (or if step 1 found no sid), auto-discover orgs from cookies and
+    1. If ``configured_url`` is set, normalize it to My Domain and read a ``sid``
+       for *that org only* (trusted — no network probe), recording which
+       browser/profile it came from. Auto-discovery is NOT a fallback here: a
+       server explicitly bound to org A must never silently execute reads or
+       writes against an unrelated org B just because A happens to be logged out
+       right now. When the pinned org has no sid, return it with a ``None`` sid
+       so the pending-login error surfaces at tool-call time.
+    2. Only when no URL was configured: auto-discover orgs from cookies and
        return the first whose sid validates against the REST API.
     3. If nothing validates, return the normalized configured URL (if any) with
        a ``None`` sid so the error surfaces at tool-call time.
@@ -120,6 +130,9 @@ def resolve_session(
         if found:
             sid, browser, profile = found
             return ResolvedSession(normalized, sid, browser, profile)
+        # Configured but logged out: stay pinned to this org, do not fall through
+        # to another org's session.
+        return ResolvedSession(normalized, None, None, None)
 
     for candidate in discover_orgs(browsers, profiles):
         if session_is_valid(candidate.instance_url, candidate.sid):

@@ -72,15 +72,28 @@ def query_sqlite_cookies(
     """Copy a (possibly locked) cookie DB to a temp file and run a read-only query.
 
     Browsers hold their cookie SQLite DB open with a write lock, so we copy it to
-    a temp directory first and open the copy read-only. Returns the raw rows, or
-    ``None`` if the DB can't be copied or read (callers defer auth errors to
-    tool-call time rather than raising at startup).
+    a temp directory first and open the copy. When the browser runs the store in
+    WAL mode, the most recently written or refreshed ``sid`` can live only in the
+    ``-wal`` sidecar and not yet in the main file, so copying the main DB alone
+    yields a stale (or schema-incomplete) snapshot. We therefore copy the
+    ``-wal`` and ``-shm`` sidecars alongside it and open the copy read-write so
+    SQLite folds the WAL into the snapshot on first access. The copy is a
+    throwaway in a private temp dir; only ``SELECT`` runs against it. Returns the
+    raw rows, or ``None`` if the DB can't be copied or read (callers defer auth
+    errors to tool-call time rather than raising at startup).
     """
     try:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_db = Path(tmp) / db_path.name
             shutil.copy2(db_path, tmp_db)
-            con = sqlite3.connect(f"file:{tmp_db}?mode=ro", uri=True)
+            for suffix in ("-wal", "-shm"):
+                sidecar = db_path.with_name(db_path.name + suffix)
+                if sidecar.exists():
+                    shutil.copy2(sidecar, tmp_db.with_name(tmp_db.name + suffix))
+            # Open read-write (not mode=ro) so SQLite can checkpoint the copied
+            # WAL into the main DB; a read-only connection cannot integrate a WAL
+            # and would miss those recent cookies.
+            con = sqlite3.connect(tmp_db)
             try:
                 return list(con.execute(sql, params).fetchall())
             finally:

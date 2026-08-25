@@ -59,8 +59,17 @@ def test_prefers_pinned_profile(monkeypatch):
     assert seen[0] == (["chrome"], ["Profile 4"])  # pinned tried first
 
 
-def test_falls_back_when_pinned_profile_has_no_sid(monkeypatch):
+def test_pinned_profile_logged_out_does_not_borrow_another_profile(monkeypatch):
+    import pytest
+
+    # The pinned chrome profile is logged out, but another profile holds a sid
+    # for the same org (possibly a different user). Once pinned, refresh must NOT
+    # widen the search: handing that other sid to the connector would run every
+    # operation — including writes — under the wrong principal. Fail closed.
+    seen: list[list[str] | None] = []
+
     def fake_read_sid(url, browsers=None, profiles=None):
+        seen.append(browsers)
         if browsers == ["chrome"]:
             return None  # pinned profile logged out
         return "FALLBACK_SID"
@@ -70,9 +79,12 @@ def test_falls_back_when_pinned_profile_has_no_sid(monkeypatch):
         monkeypatch, pin_browser="chrome", pin_profile="Profile 4"
     )
 
-    patched(_FakeSF(), "GET", "https://x")
+    with pytest.raises(RuntimeError, match="Not logged into Salesforce"):
+        patched(_FakeSF(), "GET", "https://x")
 
-    assert calls["auth"] == "Bearer FALLBACK_SID"
+    # Only the pinned scope was ever consulted; the broad fallback never ran.
+    assert seen == [["chrome"]]
+    assert calls.get("auth") != "Bearer FALLBACK_SID"
 
 
 def test_raises_when_no_sid_anywhere(monkeypatch):
