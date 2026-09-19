@@ -3,7 +3,7 @@
 
 """Read and decrypt Chromium-family cookies on macOS.
 
-Chromium browsers (Chrome, Comet, Arc, Edge, Brave) store cookies in a SQLite
+Chromium browsers (Chrome, BrowserOS neo, Comet, Arc, Edge, Brave) store cookies in a SQLite
 DB. Values are encrypted with a key derived from a per-browser password held in
 the macOS Keychain ("<Browser> Safe Storage"). The algorithm: strip the ``v10``
 prefix, derive an AES-128 key via PBKDF2-HMAC-SHA1 (salt ``saltysalt``, 1003
@@ -38,7 +38,7 @@ _SKIP_PROFILES = {"System Profile", "Guest Profile"}
 
 
 class ChromiumReader:
-    """`CookieReader` for Chromium-family browsers (Chrome, Comet, Arc, ...)."""
+    """`CookieReader` for Chromium-family browsers (Chrome, BrowserOS neo, Comet, Arc, ...)."""
 
     def discover(self, cfg: BrowserConfig) -> list[CookieSource]:
         out: list[CookieSource] = []

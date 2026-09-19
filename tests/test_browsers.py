@@ -92,3 +92,24 @@ def test_firefox_included_when_named_explicitly(tmp_path, monkeypatch):
     sources = discover_sources(browsers=["firefox"])
 
     assert {s.browser for s in sources} == {"firefox"}
+
+
+def test_registry_maps_browseros_neo_to_browserclaw_paths():
+    """BrowserOS neo's app name and its on-disk/Keychain name differ: the
+    Chromium product dir (Info.plist CrProductDirName) and the Safe Storage
+    Keychain service/account are all "BrowserClaw"."""
+    by_key = {cfg.key: cfg for cfg in browsers.BROWSERS}
+    neo = by_key["neo"]
+    assert neo.family == "chromium"
+    assert neo.base_dir == Path.home() / "Library" / "Application Support" / "BrowserClaw"
+    assert (neo.keychain_service, neo.keychain_account) == (
+        "BrowserClaw Safe Storage",
+        "BrowserClaw",
+    )
+    classic = by_key["browseros"]
+    assert classic.base_dir == Path.home() / "Library" / "Application Support" / "BrowserOS"
+    assert classic.keychain_service == "BrowserOS Safe Storage"
+    # Both are in the default scan (not opt-in), and Chrome still leads.
+    defaults = default_browsers()
+    assert defaults[0] == "chrome"
+    assert {"neo", "browseros", "comet", "safari"} <= set(defaults)

@@ -63,7 +63,7 @@ That's the whole package, in one sentence.
 
 ## How cookies are read (multi-browser, multi-profile)
 
-The wrapper reads cookies **natively** instead of delegating to `pycookiecheat`. This gives full control over which browsers and profiles are searched. `browsers.py` holds a priority-ordered registry of supported browsers (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari) with their macOS data dirs and Keychain services. `discover_sources()` enumerates every profile in each (chromium `Default`/`Profile N`, each Firefox profile dir, Safari's single store). The orchestrator in `cookies.py` walks those sources in priority order and returns the **first** non-empty `sid` matching the instance host. Optional `SALESFORCE_BROWSERS` / `SALESFORCE_PROFILES` env vars restrict or reorder the search.
+The wrapper reads cookies **natively** instead of delegating to `pycookiecheat`. This gives full control over which browsers and profiles are searched. `browsers.py` holds a priority-ordered registry of supported browsers (Chrome, BrowserOS neo, BrowserOS, Comet, Arc, Edge, Brave, Firefox, Safari) with their macOS data dirs and Keychain services. `discover_sources()` enumerates every profile in each (chromium `Default`/`Profile N`, each Firefox profile dir, Safari's single store). The orchestrator in `cookies.py` walks those sources in priority order and returns the **first** non-empty `sid` matching the instance host. Optional `SALESFORCE_BROWSERS` / `SALESFORCE_PROFILES` env vars restrict or reorder the search.
 
 Per-family reader details:
 

@@ -49,6 +49,22 @@ BROWSERS: tuple[BrowserConfig, ...] = (
         "Chrome Safe Storage",
         "Chrome",
     ),
+    # BrowserOS neo ships as "BrowserOS neo.app" but its Chromium product dir
+    # (CrProductDirName) and Keychain Safe Storage entry are both "BrowserClaw".
+    BrowserConfig(
+        "neo",
+        "chromium",
+        _APP_SUPPORT / "BrowserClaw",
+        "BrowserClaw Safe Storage",
+        "BrowserClaw",
+    ),
+    BrowserConfig(
+        "browseros",
+        "chromium",
+        _APP_SUPPORT / "BrowserOS",
+        "BrowserOS Safe Storage",
+        "BrowserOS",
+    ),
     BrowserConfig(
         "comet",
         "chromium",

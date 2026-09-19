@@ -36,7 +36,7 @@ The package is a thin Python shim around `mcp-salesforce-connector`. On every AP
 - **`cookies.py`** — sid reading. Walks the browser registry and returns the first valid `sid` for a host (`read_sid` / `read_sid_with_source`). Never raises — failures return `None` so callers defer the error to tool-call time.
 - **`orgs.py`** — org resolution. Auto-discovers logged-in orgs (`discover_orgs`), applies the My-Domain-over-Lightning ranking rule, and picks the session to bind (`resolve_session`) with REST validation.
 - **`auth.py`** — deprecated back-compat surface: re-exports `read_sid` and provides the `read_sid_from_chrome` shim. Nothing in the package imports it anymore; kept for one more release, then removed.
-- **`browsers.py`** — priority-ordered registry of supported browsers (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari) plus the `READERS` dispatch table and `discover_sources`. Callers dispatch through the reader interface, never a `family` switch.
+- **`browsers.py`** — priority-ordered registry of supported browsers (Chrome, BrowserOS neo, BrowserOS, Comet, Arc, Edge, Brave, Firefox, Safari) plus the `READERS` dispatch table and `discover_sources`. Callers dispatch through the reader interface, never a `family` switch.
 - **`chromium.py`** — `CookieReader` for Chromium-family browsers: profile discovery plus decryption (AES-128-CBC via `cryptography`, key from macOS Keychain).
 - **`firefox.py`** — `CookieReader` for Firefox: profile discovery plus unencrypted SQLite reads (`moz_cookies`).
 - **`safari.py`** — `CookieReader` for Safari: parses the binary `Cookies.binarycookies` format (requires Full Disk Access).
@@ -325,11 +325,11 @@ Every API call. The `sid` from Chrome is read fresh each time — Salesforce ses
 
 **`HTTP 401` from Salesforce on every call**: The `sid` cookie you have is valid for the UI session but the org may have "Lock sessions to the IP address from which they originated" enabled with a strict policy. If so, switch that org to OAuth-based auth via the standard `mcp-salesforce-connector` config.
 
-**Want to use a browser other than Chrome**: Supported out of the box. By default the wrapper scans Chrome, Comet, Arc, Edge, Brave, and Safari — and every profile in each — and uses the first org session it finds. No config needed. **Firefox is opt-in**: it's excluded from the default scan; enable it by naming `firefox` in `SALESFORCE_BROWSERS`.
+**Want to use a browser other than Chrome**: Supported out of the box. By default the wrapper scans Chrome, BrowserOS neo, BrowserOS, Comet, Arc, Edge, Brave, and Safari — and every profile in each — and uses the first org session it finds. No config needed. **Firefox is opt-in**: it's excluded from the default scan; enable it by naming `firefox` in `SALESFORCE_BROWSERS`.
 
 Restrict or reorder the search with optional env vars in your Claude Desktop config:
 
-- `SALESFORCE_BROWSERS` — comma-separated browser keys, in priority order. Keys: `chrome`, `comet`, `arc`, `edge`, `brave`, `firefox`, `safari`. Example: `"SALESFORCE_BROWSERS": "comet, chrome"`. This is also how you opt into Firefox — e.g. `"SALESFORCE_BROWSERS": "firefox, chrome"`.
+- `SALESFORCE_BROWSERS` — comma-separated browser keys, in priority order. Keys: `chrome`, `neo` (BrowserOS neo), `browseros`, `comet`, `arc`, `edge`, `brave`, `firefox`, `safari`. Example: `"SALESFORCE_BROWSERS": "neo, comet, chrome"`. This is also how you opt into Firefox — e.g. `"SALESFORCE_BROWSERS": "firefox, chrome"`.
 - `SALESFORCE_SKIP_BROWSERS` — comma-separated browser keys to exclude, applied after the allowlist. Use it to skip probing a browser without listing every other one — e.g. `"SALESFORCE_SKIP_BROWSERS": "safari"` scans every default browser except Safari.
 - `SALESFORCE_PROFILES` — comma-separated profile names to limit to (e.g. `"Default, Profile 1"`). Applies across all selected browsers.
 - `SALESFORCE_OPENCLI_BIN` — optional absolute path to the OpenCLI binary used by the two `browser_` tools. Resolution order is this variable, `~/bin/opencli`, then `PATH`.
@@ -345,6 +345,7 @@ Restrict or reorder the search with optional env vars in your Claude Desktop con
 
 ## Version history
 
+- **v0.2.1** (unreleased) — BrowserOS neo (`neo`) and BrowserOS (`browseros`) join the default scan. BrowserOS neo's Chromium product dir and Keychain entry are named `BrowserClaw`, so the registry maps `neo` → `~/Library/Application Support/BrowserClaw` + `BrowserClaw Safe Storage`.
 - **v0.2.0** (2026-08-25) — multi-browser, multi-profile `sid` lookup (Chrome, Comet, Arc, Edge, Brave, Firefox, Safari). Native cookie decryption via `cryptography` (replaces `pycookiecheat`). New `SALESFORCE_BROWSERS` / `SALESFORCE_PROFILES` env vars. Lightning→My Domain URL normalization; `SALESFORCE_INSTANCE_URL` now optional with REST-validated org auto-discovery. Per-call sid refresh pinned to the resolved profile, with 401/expired-session retry and an upstream-signature self-check. Browser-owned read tools and the `salesforce-mcp-browser-only` entry point. End-to-end smoke test at `scripts/smoke.py`. Session-integrity hardening from review: strict Salesforce-host matching (rejects look-alike `*-salesforce.com` domains), a configured org never silently falls back to another org, per-call sid refresh and the browser bridge stay pinned to the resolved profile/user, WAL cookie sidecars are read so fresh sids aren't missed, pipeline reads follow `nextPageToken` for large accounts, and browser reads run off the async event loop. macOS-only.
 - **v0.1.1** — pin `mcp<2.0` at install time. The `mcp` Python SDK shipped 2.0.0 on 2026-07-28, removing the low-level `Server.list_tools()` decorator that `mcp-salesforce-connector` 0.1.15 relies on. Before this pin, every fresh `uvx` resolution crashed at import with `AttributeError: 'Server' object has no attribute 'list_tools'`. No functional changes — this is purely a dependency guard until the upstream connector is ported to the 2.x API.
 - **v0.1.0** — initial release on PyPI. 14 tools (via mcp-salesforce-connector 0.1.15). Chrome-only, macOS-only, per-call `sid` refresh.
