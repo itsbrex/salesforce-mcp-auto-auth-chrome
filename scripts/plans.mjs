@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// PLANS_TPL_VERSION: 11
+// PLANS_TPL_VERSION: 14
 // Plan-page toolchain for docs/plans/ — browse, create, and index interactive
 // HTML plan pages. Runs on `bun` (preferred, faster) or `node`.
 //
@@ -26,9 +26,13 @@
 //   bun run plans help            # print usage (also -h, --help)
 //
 // Per-repo config lives at docs/plans/plans.config.json:
-//   { version, accent, accentHue, accentName, appName, nextSeq, createdAt }
+//   { version, accent, accentHue, accentName, appName, nextSeq, port, createdAt }
 // The accent is randomized once per repo (by the SessionStart hook or on first
 // `new`) and reused for every page so a repo's plans stay visually cohesive.
+// `port` is the repo's decision-listener port (47614–47899), derived
+// deterministically from appName so concurrent sessions in different repos
+// never fight over one port (47613 was the old shared port; v14 pages stop
+// using it, and the listener/page handshake also verifies the plan slug).
 //
 // Managed template: ~/.claude/templates/plans/ (auto-scaffolded + upgraded).
 
@@ -78,9 +82,22 @@ function defaultAppName() {
   return path.basename(ROOT).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'app';
 }
 
+// Deterministic per-repo listener port: FNV-1a of appName folded into
+// 47614–47899. Same repo -> same port forever; different repos land apart so
+// two sessions' plan listeners can coexist. 47613 (the legacy shared port) is
+// outside the range on purpose.
+function planPort(appName) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < appName.length; i++) {
+    h ^= appName.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return 47614 + (h % 286);
+}
+
 async function ensureConfig() {
   let cfg = await loadConfig();
-  if (cfg && cfg.accent && cfg.nextSeq && cfg.appName) return cfg;
+  if (cfg && cfg.accent && cfg.nextSeq && cfg.appName && cfg.port) return cfg;
   const pick = ACCENTS[Math.floor(Math.random() * ACCENTS.length)];
   cfg = {
     version: 2,
@@ -94,6 +111,7 @@ async function ensureConfig() {
   cfg.accent = cfg.accent || pick.css;
   cfg.nextSeq = cfg.nextSeq || 1;
   cfg.appName = cfg.appName || defaultAppName();
+  cfg.port = cfg.port || planPort(cfg.appName);
   await fs.mkdir(PLANS_DIR, { recursive: true });
   await fs.writeFile(CONFIG_PATH, JSON.stringify(cfg, null, 2) + '\n');
   return cfg;
@@ -265,7 +283,8 @@ async function cmdNew(argv) {
     .replaceAll('__PLAN_REPO__', repo)
     .replaceAll('__PLAN_SOURCE__', source)
     .replaceAll('__PLAN_ACCENT_HUE__', String(cfg.accentHue))
-    .replaceAll('__PLAN_ACCENT__', cfg.accent);
+    .replaceAll('__PLAN_ACCENT__', cfg.accent)
+    .replaceAll('__PLANS_PORT__', String(cfg.port));
 
   const filename = `${date}-${String(seq).padStart(3, '0')}-${slug}.html`;
   const dest = path.join(PLANS_DIR, filename);
