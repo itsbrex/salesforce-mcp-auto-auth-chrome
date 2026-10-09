@@ -46,11 +46,19 @@ def validate_ownership_term(value: str) -> str:
     return value
 
 
-def validate_ownership_payload(payload: object) -> list[dict[str, str]]:
-    """Validate and project browser ownership search output."""
+def validate_ownership_payload(
+    payload: object,
+) -> tuple[list[dict[str, str]], list[str]]:
+    """Validate and project one ownership search page.
+
+    Returns the page's records and the object types it reports as having
+    more results than it shows.
+    """
     contract = load_contracts()["operations"]["ownership_search"]
     if not isinstance(payload, dict):
         _drift("ownership response is not an object")
+    if "error" in payload:
+        _drift("ownership search page did not render")
     required = set(contract["response_required_keys"])
     if not required.issubset(payload):
         _drift("ownership response keys changed")
@@ -68,6 +76,13 @@ def validate_ownership_payload(payload: object) -> list[dict[str, str]]:
 
     allowed = tuple(contract["record_fields"])
     prefixes = {"Account": "001", "Contact": "003", "Lead": "00Q"}
+    more = payload.get("more")
+    if (
+        not isinstance(more, list)
+        or len(set(more)) != len(more)
+        or any(value not in prefixes for value in more)
+    ):
+        _drift("ownership pagination signal changed")
     projected: list[dict[str, str]] = []
     for record in records:
         if not isinstance(record, dict) or set(record) != set(allowed):
@@ -94,7 +109,7 @@ def validate_ownership_payload(payload: object) -> list[dict[str, str]]:
         ):
             _drift("ownership record values exceed bounds")
         projected.append(cast(dict[str, str], values))
-    return projected
+    return projected, cast(list[str], more)
 
 
 def validate_pipeline_payload(payload: object) -> list[dict[str, Any]]:

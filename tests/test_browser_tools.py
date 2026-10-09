@@ -12,8 +12,14 @@ from salesforce_mcp_auto_auth_chrome.browser_tools import (
 
 
 class FakeRuntime:
-    def search_ownership(self, term: str) -> list[dict[str, object]]:
-        return [{"type": "Account", "name": term}]
+    def __init__(self, truncated: list[str] | None = None) -> None:
+        self.truncated = truncated or []
+
+    def search_ownership(self, term: str) -> dict[str, object]:
+        return {
+            "records": [{"type": "Account", "name": term}],
+            "truncated": self.truncated,
+        }
 
     def get_account_pipeline(self, account_id: str) -> list[dict[str, object]]:
         return [{"accountId": account_id, "name": "Example"}]
@@ -177,4 +183,19 @@ def test_handle_ownership_tool_accepts_term_not_arbitrary_sosl() -> None:
 
     assert json.loads(content[0].text) == {
         "records": [{"type": "Account", "name": "Example Company"}]
+    }
+
+
+def test_handle_ownership_tool_names_truncated_objects() -> None:
+    content = asyncio.run(
+        handle_browser_tool(
+            "browser_search_ownership",
+            {"term": "Example"},
+            FakeRuntime(truncated=["Account"]),
+        )
+    )
+
+    assert json.loads(content[0].text) == {
+        "records": [{"type": "Account", "name": "Example"}],
+        "truncated": ["Account"],
     }

@@ -6,7 +6,7 @@
     "ownership_search": {
       "method": "NAVIGATE",
       "path_template": "/_ui/search/ui/UnifiedSearchResults",
-      "query_keys": ["searchType", "str"],
+      "query_keys": ["searchType", "str", "sen", "fen", "initialViewMode", "offset"],
       "credentials": "browser_navigation",
       "explicit_header_names": [],
       "browser_owned_header_names": [
@@ -21,7 +21,7 @@
         "sec-fetch-site",
         "user-agent"
       ],
-      "response_required_keys": ["records", "sourceType", "totalSize"],
+      "response_required_keys": ["more", "records", "sourceType", "totalSize"],
       "record_fields": [
         "type",
         "id",

@@ -157,14 +157,20 @@ These tools require a connected [OpenCLI](https://github.com/jackwener/opencli) 
 
 **Known limitations of the browser-owned reads:**
 
+- `browser_search_ownership` returns up to 100 records per object. Salesforce's
+  all-objects search page shows five rows per object, so an object with more is
+  re-read from its own 25-row result pages, at most four of them. An object
+  with matches beyond that is named in `truncated` (the key is omitted when
+  nothing was cut off). Narrow the term before you treat a missing record as
+  absent.
+- The search finds result grids and rows in any UI language, but it reads the
+  owner, email, website, and company values by English column labels. In a
+  non-English org those fields come back empty. `website` is filled only when
+  the org's Account search layout includes a Website column.
 - `browser_get_account_pipeline` requests four custom Opportunity fields
-  (`Size__c`, `Size_Type__c`, `Term_Months__c`, `Lease_Type__c`). An org that
-  does not define all four has the whole related-list request rejected as an
-  invalid-field error. Capability detection is tracked as a follow-up issue.
-- `browser_search_ownership` identifies the result grids by their English
-  column labels (`Account Name`, `Contact Name`, `Lead Name`), so an org whose
-  UI language is not English silently returns no matches. Locale-independent
-  detection is tracked as a follow-up issue.
+  (`Size__c`, `Size_Type__c`, `Term_Months__c`, `Lease_Type__c`). When the org
+  rejects them, it retries once with the standard fields only, and the custom
+  values come back as `null`.
 
 ### Query (2)
 

@@ -30,6 +30,16 @@ from .instance import normalize_host
 API_VERSION = "v60.0"
 Runner = Callable[[Sequence[str], float], str]
 
+# Ownership search objects in result order, with their record-ID key prefixes.
+OWNERSHIP_OBJECTS = {"Account": "001", "Contact": "003", "Lead": "00Q"}
+# Salesforce renders 25 rows per page of a single-object search; it is not
+# configurable, and the offsets of the next pages step by it.
+_OWNERSHIP_PAGE_SIZE = 25
+# Pages read per object once the summary page reports more than it shows
+# (100 rows each). An object still incomplete after them is reported as
+# truncated instead of being silently cut off.
+_OWNERSHIP_MAX_PAGES = 4
+
 
 class BrowserBridgeError(RuntimeError):
     """Sanitized browser bridge failure with no command output or CRM values."""
@@ -75,20 +85,64 @@ class SalesforceBrowser:
         self._active_session: tuple[str, str, str, str] | None = None
         self._managed_session_lock = RLock()
 
-    def search_ownership(self, term: str) -> list[dict[str, str]]:
-        """Search fixed ownership fields through Salesforce's native search page."""
+    def search_ownership(self, term: str) -> dict[str, Any]:
+        """Search fixed ownership fields through Salesforce's native search page.
+
+        The all-objects summary page lists only the first five rows of each
+        object. An object it reports as having more is re-read from its own
+        paged results, and one still incomplete after the page bound is named
+        in ``truncated`` so a caller never reads a cut-off list as complete.
+        """
         term = validate_ownership_term(term)
+        base_url = (
+            f"{self.instance_url}/_ui/search/ui/UnifiedSearchResults"
+            f"?searchType=2&str={quote(term, safe='')}"
+        )
+        found: dict[str, dict[str, str]] = {}
+        truncated: list[str] = []
         with self._managed_session() as (profile, session, target, original_url):
             try:
-                url = (
-                    f"{self.instance_url}/_ui/search/ui/UnifiedSearchResults"
-                    f"?searchType=2&str={quote(term, safe='')}"
+                target, records, incomplete = self._ownership_page(
+                    profile, session, target, base_url, 0
                 )
-                target = self._navigate(profile, session, target, url)
-                payload = self._eval(profile, session, target, _OWNERSHIP_JS)
+                for record in records:
+                    found.setdefault(record["id"], record)
+                for record_type, prefix in OWNERSHIP_OBJECTS.items():
+                    if record_type not in incomplete:
+                        continue
+                    for page in range(_OWNERSHIP_MAX_PAGES):
+                        offset = page * _OWNERSHIP_PAGE_SIZE
+                        url = (
+                            f"{base_url}&sen={prefix}&fen={prefix}"
+                            f"&initialViewMode=detail&offset={offset}"
+                        )
+                        target, records, more = self._ownership_page(
+                            profile, session, target, url, offset
+                        )
+                        if any(record["type"] != record_type for record in records):
+                            raise RuntimeError(
+                                "Salesforce browser contract drift: "
+                                "scoped search returned another object"
+                            )
+                        for record in records:
+                            found.setdefault(record["id"], record)
+                        if record_type not in more:
+                            break
+                    else:
+                        truncated.append(record_type)
             finally:
                 self._restore_tab(profile, session, target, original_url)
-        return validate_ownership_payload(payload)
+        return {"records": list(found.values()), "truncated": truncated}
+
+    def _ownership_page(
+        self, profile: str, session: str, target: str, url: str, offset: int
+    ) -> tuple[str, list[dict[str, str]], list[str]]:
+        target = self._navigate(profile, session, target, url)
+        script = _OWNERSHIP_JS.replace("__OFFSET__", str(offset))
+        records, more = validate_ownership_payload(
+            self._eval(profile, session, target, script)
+        )
+        return target, records, more
 
     def session_is_active(self) -> bool:
         """Validate current session through browser-owned same-origin fetch."""
@@ -265,7 +319,9 @@ class SalesforceBrowser:
         binary = self.binary
         if not binary:
             raise BrowserBridgeError("OpenCLI browser bridge is unavailable")
-        output = self.runner([binary, "profile", "list"], 10)
+        # The listing waits on the bridge daemon and has been measured at 1.6 to
+        # 15 seconds, so a 10-second bound failed whole searches at random.
+        output = self.runner([binary, "profile", "list"], 30)
         connected: list[tuple[str, str]] = []
         for line in output.splitlines():
             if "not connected" in line.casefold():
@@ -479,15 +535,15 @@ _IDENTITY_JS = f"""
 
 _OWNERSHIP_JS = r"""
 (async()=>{
-  const prefixes={'001':'Account','003':'Contact','00Q':'Lead'};
+  const objects=[['001','Account'],['003','Contact'],['00Q','Lead']];
+  const offset=__OFFSET__;
   const actionLabels=new Set(['edit','del','change owner']);
   const clean=value=>(value||'').trim();
-  const recordMatch=href=>(href||'').match(/(001|003|00Q)[A-Za-z0-9]{12,15}/);
   // Classic action links (Edit / Del) embed the record ID too, but their path
   // keeps going after it ("/001.../e"); a detail link's path ends at the ID
-  // (optionally "/view" in Lightning-shaped hrefs). Detecting tables and rows
-  // by that link shape instead of translated header text keeps the search
-  // working in every Salesforce UI language.
+  // (optionally "/view" in Lightning-shaped hrefs). Finding rows by that link
+  // shape instead of translated header text keeps the search working in every
+  // Salesforce UI language.
   const detailMatch=anchor=>{
     const href=anchor.getAttribute('href')||'';
     let path=href;
@@ -495,57 +551,63 @@ _OWNERSHIP_JS = r"""
     return path.match(/\/((001|003|00Q)[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?)(?:\/view)?$/);
   };
   const sleep=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
-  let tables=[];
+  // The results holder renders even when nothing matches, so its absence
+  // means an error or login page, never "no results".
   for(let attempt=0;attempt<40;attempt++){
-    tables=[...document.querySelectorAll('table')];
-    if(tables.some(table=>[...table.querySelectorAll('a[href]')].some(anchor=>recordMatch(anchor.getAttribute('href')))))break;
+    if(document.readyState==='complete'&&document.getElementById('searchPageHolderDiv'))break;
     await sleep(250);
   }
-  const records=[];
-  for(const table of tables){
-    const headerRow=[...table.querySelectorAll('tr')].find(row=>row.querySelector(':scope > th'));
-    if(!headerRow)continue;
-    const headers=[...headerRow.querySelectorAll(':scope > th, :scope > td')].map(cell=>clean(cell.textContent));
-    const counts={'001':0,'003':0,'00Q':0};
-    for(const anchor of table.querySelectorAll('a[href]')){
-      const match=detailMatch(anchor);
-      if(match)counts[match[2]]+=1;
+  if(!document.getElementById('searchPageHolderDiv'))return {error:'search_page_unavailable'};
+  const records=[],more=[];
+  for(const [prefix,type] of objects){
+    // Each object's results sit in a block whose id is its API name plus
+    // "_body" in every UI language. Reading only these blocks keeps the
+    // Opportunity, Activity and page-layout grids, which link Accounts too,
+    // from posing as Account hits with another record's owner.
+    const body=document.getElementById(type+'_body');
+    if(!body)continue;
+    for(const table of body.querySelectorAll('table')){
+      const rows=[...table.querySelectorAll(':scope > thead > tr, :scope > tbody > tr, :scope > tr')];
+      const headerRow=rows.find(row=>row.querySelector(':scope > th'));
+      if(!headerRow)continue;
+      const headers=[...headerRow.querySelectorAll(':scope > th, :scope > td')].map(cell=>clean(cell.textContent));
+      for(const row of rows){
+        if(row===headerRow)continue;
+        const cells=[...row.querySelectorAll(':scope > th, :scope > td')];
+        const anchors=cells.flatMap(cell=>[...cell.querySelectorAll('a[href]')]);
+        const primaryAnchor=anchors.find(anchor=>detailMatch(anchor)?.[2]===prefix&&!actionLabels.has(clean(anchor.textContent).toLowerCase()));
+        if(!primaryAnchor)continue;
+        const idMatch=detailMatch(primaryAnchor);
+        if(!idMatch)continue;
+        const valueFor=pattern=>{
+          const index=headers.findIndex(header=>pattern.test(header));
+          return index>=0&&index<cells.length?clean(cells[index].textContent):'';
+        };
+        const mailtoAnchor=anchors.find(anchor=>(anchor.getAttribute('href')||'').toLowerCase().startsWith('mailto:'));
+        const accountAnchor=prefix==='003'?anchors.find(anchor=>detailMatch(anchor)?.[2]==='001'):null;
+        records.push({
+          type,
+          id:idMatch[1],
+          name:clean(primaryAnchor.textContent).slice(0,240),
+          owner:valueFor(/owner/i).slice(0,120),
+          email:(valueFor(/e-?mail/i)||(mailtoAnchor?clean(mailtoAnchor.textContent):'')).slice(0,320),
+          website:valueFor(/website/i).slice(0,2048),
+          accountId:accountAnchor?(detailMatch(accountAnchor)?.[1]||''):'',
+          company:prefix==='00Q'?valueFor(/^company$/i).slice(0,240):''
+        });
+      }
     }
-    // A Contact grid links each row's Contact and often its Account, so ties
-    // resolve toward the more specific object (003, then 00Q, then 001).
-    const primaryPrefix=['003','00Q','001'].reduce((best,prefix)=>counts[prefix]>counts[best]?prefix:best,'003');
-    if(!counts[primaryPrefix])continue;
-    const rows=[...table.querySelectorAll(':scope > tbody > tr, :scope > tr')];
-    for(const row of rows){
-      if(row===headerRow)continue;
-      const cells=[...row.querySelectorAll(':scope > th, :scope > td')];
-      const anchors=cells.flatMap(cell=>[...cell.querySelectorAll('a[href]')]);
-      const primaryAnchor=anchors.find(anchor=>detailMatch(anchor)?.[2]===primaryPrefix&&!actionLabels.has(clean(anchor.textContent).toLowerCase()));
-      if(!primaryAnchor)continue;
-      const idMatch=detailMatch(primaryAnchor);
-      if(!idMatch)continue;
-      const valueFor=pattern=>{
-        const index=headers.findIndex(header=>pattern.test(header));
-        return index>=0&&index<cells.length?clean(cells[index].textContent):'';
-      };
-      const mailtoAnchor=anchors.find(anchor=>(anchor.getAttribute('href')||'').toLowerCase().startsWith('mailto:'));
-      const accountAnchor=primaryPrefix==='003'?anchors.find(anchor=>detailMatch(anchor)?.[2]==='001'):null;
-      records.push({
-        type:prefixes[primaryPrefix],
-        id:idMatch[1],
-        name:clean(primaryAnchor.textContent).slice(0,240),
-        owner:valueFor(/owner/i).slice(0,120),
-        email:(valueFor(/e-?mail/i)||(mailtoAnchor?clean(mailtoAnchor.textContent):'')).slice(0,320),
-        website:valueFor(/website/i).slice(0,2048),
-        accountId:accountAnchor?(detailMatch(accountAnchor)?.[1]||''):'',
-        company:primaryPrefix==='00Q'?valueFor(/^company$/i).slice(0,240):''
-      });
-      if(records.length>=60)break;
-    }
-    if(records.length>=60)break;
+    // More rows exist when the summary page renders this object's
+    // "showMore-<prefix>" control, or a single-object page links a page of
+    // this object at a higher offset than the one shown.
+    const nextPage=[...document.querySelectorAll('a[onclick*="offset="]')].some(anchor=>(anchor.getAttribute('onclick').match(/UnifiedSearchResults\?[^'"]*/g)||[]).some(url=>{
+      const params=new URLSearchParams(url.slice(url.indexOf('?')+1));
+      return (params.get('fen')===prefix||params.get('sen')===prefix)&&Number(params.get('offset'))>offset;
+    }));
+    if(nextPage||document.getElementById('showMore-'+prefix))more.push(type);
   }
   const unique=[...new Map(records.map(record=>[record.id,record])).values()];
-  return {sourceType:'classic_search_page',totalSize:unique.length,records:unique};
+  return {sourceType:'classic_search_page',totalSize:unique.length,records:unique,more};
 })()
 """.strip()
 

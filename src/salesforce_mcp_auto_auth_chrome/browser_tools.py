@@ -11,7 +11,7 @@ import mcp.types as types
 
 
 class BrowserRuntime(Protocol):
-    def search_ownership(self, term: str) -> list[dict[str, str]]: ...
+    def search_ownership(self, term: str) -> dict[str, Any]: ...
 
     def get_account_pipeline(self, account_id: str) -> list[dict[str, Any]]: ...
 
@@ -36,7 +36,10 @@ def browser_tools() -> list[types.Tool]:
             name="browser_search_ownership",
             description=(
                 "Search fixed Account, Contact, and Lead ownership fields inside "
-                "the user's authenticated Salesforce browser session."
+                "the user's authenticated Salesforce browser session. Returns up "
+                "to 100 records per object; `truncated` names any object with "
+                "more matches than that, so narrow the term before reading a "
+                "missing record as absent."
             ),
             inputSchema={
                 "type": "object",
@@ -125,10 +128,12 @@ async def handle_browser_tool(
     if name == "browser_search_ownership":
         if set(arguments) != {"term"} or not isinstance(arguments.get("term"), str):
             raise ValueError("unexpected browser tool arguments")
+        result = await asyncio.to_thread(runtime.search_ownership, arguments["term"])
+        # `truncated` appears only when something was cut off, so a consumer
+        # that predates it still parses every complete result.
         ownership_payload: object = {
-            "records": await asyncio.to_thread(
-                runtime.search_ownership, arguments["term"]
-            )
+            "records": result["records"],
+            **({"truncated": result["truncated"]} if result["truncated"] else {}),
         }
         return [
             types.TextContent(
