@@ -83,73 +83,68 @@ class SalesforceBrowser:
         self.monotonic = monotonic
         self._last_browser_operation_at: float | None = None
         self._active_session: tuple[str, str, str, str] | None = None
+        # True while the managed tab sits on a Classic search page instead of
+        # the Lightning origin that same-origin API reads need.
+        self._off_lightning = False
         self._managed_session_lock = RLock()
 
     def search_ownership(self, term: str) -> dict[str, Any]:
         """Search fixed ownership fields through Salesforce's native search page.
 
         The all-objects summary page lists only the first five rows of each
-        object. An object it reports as having more is re-read from its own
-        paged results, and one still incomplete after the page bound is named
-        in ``truncated`` so a caller never reads a cut-off list as complete.
+        object. For an object it reports as having more, the tab requests that
+        object's own result pages in place, up to the page bound. An object
+        with matches beyond the bound is named in ``truncated`` so a caller
+        never reads a cut-off list as complete.
         """
         term = validate_ownership_term(term)
-        base_url = (
+        url = (
             f"{self.instance_url}/_ui/search/ui/UnifiedSearchResults"
             f"?searchType=2&str={quote(term, safe='')}"
         )
-        found: dict[str, dict[str, str]] = {}
-        truncated: list[str] = []
-        with self._managed_session() as (profile, session, target, original_url):
-            try:
-                target, records, incomplete = self._ownership_page(
-                    profile, session, target, base_url, 0
-                )
-                for record in records:
-                    found.setdefault(record["id"], record)
-                for record_type, prefix in OWNERSHIP_OBJECTS.items():
-                    if record_type not in incomplete:
-                        continue
-                    for page in range(_OWNERSHIP_MAX_PAGES):
-                        offset = page * _OWNERSHIP_PAGE_SIZE
-                        url = (
-                            f"{base_url}&sen={prefix}&fen={prefix}"
-                            f"&initialViewMode=detail&offset={offset}"
-                        )
-                        target, records, more = self._ownership_page(
-                            profile, session, target, url, offset
-                        )
-                        if any(record["type"] != record_type for record in records):
-                            raise RuntimeError(
-                                "Salesforce browser contract drift: "
-                                "scoped search returned another object"
-                            )
-                        for record in records:
-                            found.setdefault(record["id"], record)
-                        if record_type not in more:
-                            break
-                    else:
-                        truncated.append(record_type)
-            finally:
-                self._restore_tab(profile, session, target, original_url)
-        return {"records": list(found.values()), "truncated": truncated}
-
-    def _ownership_page(
-        self, profile: str, session: str, target: str, url: str, offset: int
-    ) -> tuple[str, list[dict[str, str]], list[str]]:
-        target = self._navigate(profile, session, target, url)
-        script = _OWNERSHIP_JS.replace("__OFFSET__", str(offset))
-        records, more = validate_ownership_payload(
-            self._eval(profile, session, target, script)
+        limit = _OWNERSHIP_PAGE_SIZE * _OWNERSHIP_MAX_PAGES
+        script = _OWNERSHIP_JS.replace("__PAGE_SIZE__", str(_OWNERSHIP_PAGE_SIZE))
+        script = script.replace("__MAX_PAGES__", str(_OWNERSHIP_MAX_PAGES))
+        with self._managed_session() as (profile, session, target, _original_url):
+            # The tab stays on the search page: consecutive searches skip a
+            # Lightning reload each (about 4 seconds), and the next read that
+            # needs the Lightning origin navigates back first.
+            self._off_lightning = True
+            target = self._navigate(profile, session, target, url)
+            payload = self._eval(profile, session, target, script, timeout=90)
+        summary, _incomplete, pages = validate_ownership_payload(
+            payload, page_record_limit=limit
         )
-        return target, records, more
+
+        records: list[dict[str, str]] = []
+        truncated: list[str] = []
+        for record_type in OWNERSHIP_OBJECTS:
+            page_records, complete = pages.get(record_type, ([], True))
+            if any(record["type"] != record_type for record in page_records):
+                raise RuntimeError(
+                    "Salesforce browser contract drift: "
+                    "scoped search returned another object"
+                )
+            # The object's own pages are its full list in relevance order; the
+            # summary rows are normally their first five and only fill gaps.
+            found: dict[str, dict[str, str]] = {}
+            for record in page_records + [
+                record for record in summary if record["type"] == record_type
+            ]:
+                found.setdefault(record["id"], record)
+            kept = list(found.values())
+            if not complete or len(kept) > limit:
+                truncated.append(record_type)
+            records.extend(kept[:limit])
+        return {"records": records, "truncated": truncated}
 
     def session_is_active(self) -> bool:
         """Validate current session through browser-owned same-origin fetch."""
         # Opening a session already asserts identity, but a *cached* one was
         # asserted at some earlier point and may since have died, so re-check
         # it here rather than reporting "active" on the strength of a handle.
-        with self._managed_session() as (profile, session, target, _original_url):
+        with self._managed_session() as (profile, session, target, original_url):
+            target = self._return_to_lightning(profile, session, target, original_url)
             self._assert_identity(profile, session, target)
             return True
 
@@ -162,6 +157,7 @@ class SalesforceBrowser:
         with self._managed_session_lock:
             active = self._active_session
             self._active_session = None
+            self._off_lightning = False
             if active is None:
                 return
             profile, session, _target, _home_url = active
@@ -171,7 +167,8 @@ class SalesforceBrowser:
     def get_account_pipeline(self, account_id: str) -> list[dict[str, Any]]:
         """Return fixed standard opportunity fields for one Account."""
         account_id = validate_salesforce_id(account_id, "001", field_name="account_id")
-        with self._managed_session() as (profile, session, target, _original_url):
+        with self._managed_session() as (profile, session, target, original_url):
+            target = self._return_to_lightning(profile, session, target, original_url)
             script = _PIPELINE_JS.replace("__ACCOUNT_ID__", json.dumps(account_id))
             payload = self._eval(profile, session, target, script)
         return validate_pipeline_payload(payload)
@@ -235,6 +232,7 @@ class SalesforceBrowser:
             raise ValueError("limit must be an integer from 1 through 25")
 
         with self._managed_session() as (profile, session, target, original_url):
+            target = self._return_to_lightning(profile, session, target, original_url)
             pipeline_by_account = self._account_pipeline_batch(
                 profile, session, target, parsed_ids
             )
@@ -384,6 +382,7 @@ class SalesforceBrowser:
             f"{related_list}/view"
         )
         target = self._navigate(profile, session, target, url)
+        self._off_lightning = False
         expression = script.replace("__LIMIT__", str(limit))
         return self._eval(profile, session, target, expression)
 
@@ -418,10 +417,27 @@ class SalesforceBrowser:
             pipelines[account_id] = records
         return pipelines
 
-    def _eval(self, profile: str, session: str, target: str, script: str) -> object:
+    def _eval(
+        self,
+        profile: str,
+        session: str,
+        target: str,
+        script: str,
+        *,
+        timeout: float = 35,
+    ) -> object:
         return self._command(
-            profile, session, ["eval", script, "--tab", target], timeout=35
+            profile, session, ["eval", script, "--tab", target], timeout=timeout
         )
+
+    def _return_to_lightning(
+        self, profile: str, session: str, target: str, home_url: str
+    ) -> str:
+        if not self._off_lightning:
+            return target
+        target = self._navigate(profile, session, target, home_url)
+        self._off_lightning = False
+        return target
 
     def _restore_tab(
         self, profile: str, session: str, target: str, original_url: str
@@ -536,7 +552,7 @@ _IDENTITY_JS = f"""
 _OWNERSHIP_JS = r"""
 (async()=>{
   const objects=[['001','Account'],['003','Contact'],['00Q','Lead']];
-  const offset=__OFFSET__;
+  const pageSize=__PAGE_SIZE__,maxPages=__MAX_PAGES__;
   const actionLabels=new Set(['edit','del','change owner']);
   const clean=value=>(value||'').trim();
   // Classic action links (Edit / Del) embed the record ID too, but their path
@@ -558,56 +574,85 @@ _OWNERSHIP_JS = r"""
     await sleep(250);
   }
   if(!document.getElementById('searchPageHolderDiv'))return {error:'search_page_unavailable'};
-  const records=[],more=[];
-  for(const [prefix,type] of objects){
-    // Each object's results sit in a block whose id is its API name plus
-    // "_body" in every UI language. Reading only these blocks keeps the
-    // Opportunity, Activity and page-layout grids, which link Accounts too,
-    // from posing as Account hits with another record's owner.
-    const body=document.getElementById(type+'_body');
-    if(!body)continue;
-    for(const table of body.querySelectorAll('table')){
-      const rows=[...table.querySelectorAll(':scope > thead > tr, :scope > tbody > tr, :scope > tr')];
-      const headerRow=rows.find(row=>row.querySelector(':scope > th'));
-      if(!headerRow)continue;
-      const headers=[...headerRow.querySelectorAll(':scope > th, :scope > td')].map(cell=>clean(cell.textContent));
-      for(const row of rows){
-        if(row===headerRow)continue;
-        const cells=[...row.querySelectorAll(':scope > th, :scope > td')];
-        const anchors=cells.flatMap(cell=>[...cell.querySelectorAll('a[href]')]);
-        const primaryAnchor=anchors.find(anchor=>detailMatch(anchor)?.[2]===prefix&&!actionLabels.has(clean(anchor.textContent).toLowerCase()));
-        if(!primaryAnchor)continue;
-        const idMatch=detailMatch(primaryAnchor);
-        if(!idMatch)continue;
-        const valueFor=pattern=>{
-          const index=headers.findIndex(header=>pattern.test(header));
-          return index>=0&&index<cells.length?clean(cells[index].textContent):'';
-        };
-        const mailtoAnchor=anchors.find(anchor=>(anchor.getAttribute('href')||'').toLowerCase().startsWith('mailto:'));
-        const accountAnchor=prefix==='003'?anchors.find(anchor=>detailMatch(anchor)?.[2]==='001'):null;
-        records.push({
-          type,
-          id:idMatch[1],
-          name:clean(primaryAnchor.textContent).slice(0,240),
-          owner:valueFor(/owner/i).slice(0,120),
-          email:(valueFor(/e-?mail/i)||(mailtoAnchor?clean(mailtoAnchor.textContent):'')).slice(0,320),
-          website:valueFor(/website/i).slice(0,2048),
-          accountId:accountAnchor?(detailMatch(accountAnchor)?.[1]||''):'',
-          company:prefix==='00Q'?valueFor(/^company$/i).slice(0,240):''
-        });
+  const read=(doc,offset)=>{
+    const records=[],more=[];
+    for(const [prefix,type] of objects){
+      // Each object's results sit in a block whose id is its API name plus
+      // "_body" in every UI language. Reading only these blocks keeps the
+      // Opportunity, Activity and page-layout grids, which link Accounts too,
+      // from posing as Account hits with another record's owner.
+      const body=doc.getElementById(type+'_body');
+      if(!body)continue;
+      for(const table of body.querySelectorAll('table')){
+        const rows=[...table.querySelectorAll(':scope > thead > tr, :scope > tbody > tr, :scope > tr')];
+        const headerRow=rows.find(row=>row.querySelector(':scope > th'));
+        if(!headerRow)continue;
+        const headers=[...headerRow.querySelectorAll(':scope > th, :scope > td')].map(cell=>clean(cell.textContent));
+        for(const row of rows){
+          if(row===headerRow)continue;
+          const cells=[...row.querySelectorAll(':scope > th, :scope > td')];
+          const anchors=cells.flatMap(cell=>[...cell.querySelectorAll('a[href]')]);
+          const primaryAnchor=anchors.find(anchor=>detailMatch(anchor)?.[2]===prefix&&!actionLabels.has(clean(anchor.textContent).toLowerCase()));
+          if(!primaryAnchor)continue;
+          const idMatch=detailMatch(primaryAnchor);
+          if(!idMatch)continue;
+          const valueFor=pattern=>{
+            const index=headers.findIndex(header=>pattern.test(header));
+            return index>=0&&index<cells.length?clean(cells[index].textContent):'';
+          };
+          const mailtoAnchor=anchors.find(anchor=>(anchor.getAttribute('href')||'').toLowerCase().startsWith('mailto:'));
+          const accountAnchor=prefix==='003'?anchors.find(anchor=>detailMatch(anchor)?.[2]==='001'):null;
+          records.push({
+            type,
+            id:idMatch[1],
+            name:clean(primaryAnchor.textContent).slice(0,240),
+            owner:valueFor(/owner/i).slice(0,120),
+            email:(valueFor(/e-?mail/i)||(mailtoAnchor?clean(mailtoAnchor.textContent):'')).slice(0,320),
+            website:valueFor(/website/i).slice(0,2048),
+            accountId:accountAnchor?(detailMatch(accountAnchor)?.[1]||''):'',
+            company:prefix==='00Q'?valueFor(/^company$/i).slice(0,240):''
+          });
+        }
       }
+      // More rows exist when the summary page renders this object's
+      // "showMore-<prefix>" control, or a single-object page links a page of
+      // this object at a higher offset than the one shown.
+      const nextPage=[...doc.querySelectorAll('a[onclick*="offset="]')].some(anchor=>(anchor.getAttribute('onclick').match(/UnifiedSearchResults\?[^'"]*/g)||[]).some(url=>{
+        const params=new URLSearchParams(url.slice(url.indexOf('?')+1));
+        return (params.get('fen')===prefix||params.get('sen')===prefix)&&Number(params.get('offset'))>offset;
+      }));
+      if(nextPage||doc.getElementById('showMore-'+prefix))more.push(type);
     }
-    // More rows exist when the summary page renders this object's
-    // "showMore-<prefix>" control, or a single-object page links a page of
-    // this object at a higher offset than the one shown.
-    const nextPage=[...document.querySelectorAll('a[onclick*="offset="]')].some(anchor=>(anchor.getAttribute('onclick').match(/UnifiedSearchResults\?[^'"]*/g)||[]).some(url=>{
-      const params=new URLSearchParams(url.slice(url.indexOf('?')+1));
-      return (params.get('fen')===prefix||params.get('sen')===prefix)&&Number(params.get('offset'))>offset;
-    }));
-    if(nextPage||document.getElementById('showMore-'+prefix))more.push(type);
+    return {records,more};
+  };
+  const summary=read(document,0);
+  // An object's own result pages are requested from this same origin with
+  // the session the page already holds, as its "Next Page" control does.
+  // Navigating to each one took seconds; a request takes about 300 ms.
+  const term=new URL(location.href).searchParams.get('str')||'';
+  const pagesOf=async(prefix,type)=>{
+    const records=[];
+    for(let page=0;page<maxPages;page++){
+      const offset=page*pageSize;
+      const url=new URL('/_ui/search/ui/UnifiedSearchResults',location.origin);
+      url.search=new URLSearchParams({searchType:'2',str:term,sen:prefix,fen:prefix,initialViewMode:'detail',offset:String(offset)}).toString();
+      const response=await fetch(url,{credentials:'same-origin'});
+      if(!response.ok)return null;
+      const doc=new DOMParser().parseFromString(await response.text(),'text/html');
+      if(!doc.getElementById('searchPageHolderDiv'))return null;
+      const result=read(doc,offset);
+      records.push(...result.records);
+      if(!result.more.includes(type))return {records,complete:true};
+    }
+    return {records,complete:false};
+  };
+  const pages={};
+  const results=await Promise.all(objects.filter(([,type])=>summary.more.includes(type)).map(async([prefix,type])=>[type,await pagesOf(prefix,type)]));
+  for(const [type,result] of results){
+    if(!result)return {error:'search_page_unavailable'};
+    pages[type]=result;
   }
-  const unique=[...new Map(records.map(record=>[record.id,record])).values()];
-  return {sourceType:'classic_search_page',totalSize:unique.length,records:unique,more};
+  return {sourceType:'classic_search_page',summary:{records:summary.records,incomplete:summary.more},pages};
 })()
 """.strip()
 

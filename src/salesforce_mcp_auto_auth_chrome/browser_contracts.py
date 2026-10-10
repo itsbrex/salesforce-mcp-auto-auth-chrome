@@ -46,43 +46,73 @@ def validate_ownership_term(value: str) -> str:
     return value
 
 
-def validate_ownership_payload(
-    payload: object,
-) -> tuple[list[dict[str, str]], list[str]]:
-    """Validate and project one ownership search page.
+_OWNERSHIP_PREFIXES = {"Account": "001", "Contact": "003", "Lead": "00Q"}
+_OWNERSHIP_ERRORS = {
+    "search_page_unavailable": "ownership search page did not render",
+}
 
-    Returns the page's records and the object types it reports as having
-    more results than it shows.
+
+def validate_ownership_payload(
+    payload: object, *, page_record_limit: int
+) -> tuple[
+    list[dict[str, str]], list[str], dict[str, tuple[list[dict[str, str]], bool]]
+]:
+    """Validate and project one ownership search.
+
+    Returns the summary page's records, the object types it reports as having
+    more than it shows, and for each of those types the records read from its
+    own result pages plus whether they reached the last page.
     """
     contract = load_contracts()["operations"]["ownership_search"]
     if not isinstance(payload, dict):
         _drift("ownership response is not an object")
     if "error" in payload:
-        _drift("ownership search page did not render")
+        _drift(_OWNERSHIP_ERRORS.get(str(payload["error"]), "ownership search failed"))
     required = set(contract["response_required_keys"])
     if not required.issubset(payload):
         _drift("ownership response keys changed")
-    records = payload.get("records")
-    total = payload.get("totalSize")
-    source_type = payload.get("sourceType")
+    summary = payload.get("summary")
+    pages = payload.get("pages")
     if (
-        not isinstance(records, list)
-        or len(records) > 60
-        or not isinstance(total, int)
-        or total != len(records)
-        or source_type != "classic_search_page"
+        payload.get("sourceType") != "classic_search_page"
+        or not isinstance(summary, dict)
+        or set(summary) != {"records", "incomplete"}
+        or not isinstance(pages, dict)
     ):
         _drift("ownership response types changed")
-
-    allowed = tuple(contract["record_fields"])
-    prefixes = {"Account": "001", "Contact": "003", "Lead": "00Q"}
-    more = payload.get("more")
+    incomplete = summary["incomplete"]
     if (
-        not isinstance(more, list)
-        or len(set(more)) != len(more)
-        or any(value not in prefixes for value in more)
+        not isinstance(incomplete, list)
+        or len(set(incomplete)) != len(incomplete)
+        or any(value not in _OWNERSHIP_PREFIXES for value in incomplete)
+        or set(pages) != set(incomplete)
     ):
         _drift("ownership pagination signal changed")
+    allowed = tuple(contract["record_fields"])
+    projected_pages: dict[str, tuple[list[dict[str, str]], bool]] = {}
+    for record_type, page in pages.items():
+        if (
+            not isinstance(page, dict)
+            or set(page) != {"records", "complete"}
+            or not isinstance(page["complete"], bool)
+        ):
+            _drift("ownership page shape changed")
+        projected_pages[record_type] = (
+            _ownership_records(page["records"], allowed, page_record_limit),
+            page["complete"],
+        )
+    return (
+        _ownership_records(summary["records"], allowed, 60),
+        cast(list[str], incomplete),
+        projected_pages,
+    )
+
+
+def _ownership_records(
+    records: object, allowed: tuple[str, ...], limit: int
+) -> list[dict[str, str]]:
+    if not isinstance(records, list) or len(records) > limit:
+        _drift("ownership response types changed")
     projected: list[dict[str, str]] = []
     for record in records:
         if not isinstance(record, dict) or set(record) != set(allowed):
@@ -90,8 +120,7 @@ def validate_ownership_payload(
         values = {field: record[field] for field in allowed}
         if not all(isinstance(value, str) for value in values.values()):
             _drift("ownership record types changed")
-        record_type = values["type"]
-        prefix = prefixes.get(record_type)
+        prefix = _OWNERSHIP_PREFIXES.get(values["type"])
         try:
             if prefix is None:
                 raise ValueError("invalid ownership record type")
@@ -109,7 +138,7 @@ def validate_ownership_payload(
         ):
             _drift("ownership record values exceed bounds")
         projected.append(cast(dict[str, str], values))
-    return projected, cast(list[str], more)
+    return projected
 
 
 def validate_pipeline_payload(payload: object) -> list[dict[str, Any]]:

@@ -91,7 +91,7 @@ class FakeRunner:
             if self.ownership_page is not None:
                 return json.dumps(self.ownership_page(self.opened[-1]))
             return json.dumps(
-                _ownership_page([_hit("Account", "001000000000000AAA")], [])
+                _ownership_result([_hit("Account", "001000000000000AAA")], [], {})
             )
         if "const accountIds=" in joined and "ui-api/related-list-records" in joined:
             return json.dumps(
@@ -217,15 +217,27 @@ def _hit(record_type: str, record_id: str) -> dict[str, str]:
     }
 
 
-def _ownership_page(
-    records: list[dict[str, str]], more: list[str]
+def _ownership_result(
+    summary: list[dict[str, str]],
+    incomplete: list[str],
+    pages: dict[str, tuple[list[dict[str, str]], bool]],
 ) -> dict[str, object]:
     return {
         "sourceType": "classic_search_page",
-        "totalSize": len(records),
-        "records": records,
-        "more": more,
+        "summary": {"records": summary, "incomplete": incomplete},
+        "pages": {
+            record_type: {"records": records, "complete": complete}
+            for record_type, (records, complete) in pages.items()
+        },
     }
+
+
+def _ids(prefix: str, count: int, start: int = 1) -> list[dict[str, str]]:
+    record_type = {"001": "Account", "003": "Contact", "00Q": "Lead"}[prefix]
+    return [
+        _hit(record_type, f"{prefix}{index:012d}AAA")
+        for index in range(start, start + count)
+    ]
 
 
 def _ownership_scripts(runner: FakeRunner) -> list[str]:
@@ -279,18 +291,26 @@ def test_ownership_search_executes_inside_browser_with_fixed_contract() -> None:
         "records": [_hit("Account", "001000000000000AAA")],
         "truncated": [],
     }
-    # Nothing beyond the summary page is read when it reports no more rows.
-    assert runner.opened[1:-1] == [
+    # One navigation: further result pages are requested inside the tab, and
+    # the tab stays there until a Lightning read needs it back.
+    assert runner.opened[1:] == [
         "https://acme.my.salesforce.com/_ui/search/ui/UnifiedSearchResults"
         "?searchType=2&str=Example%20Company"
     ]
     command_text = "\n".join(" ".join(call) for call in runner.calls)
     assert "--tab SF-TARGET" in command_text
     assert "actionLabels.has" in command_text
-    assert "/services/data/v60.0/search/?q=" not in command_text
     (ownership_command,) = _ownership_scripts(runner)
-    assert "const offset=0;" in ownership_command
-    assert "fetch(" not in ownership_command
+    assert "const pageSize=25,maxPages=4;" in ownership_command
+    # The only request is the fixed classic search path on the page's own
+    # origin with the session it already holds: no API, header, or SOSL.
+    assert ownership_command.count("fetch(") == 1
+    assert "fetch(url,{credentials:'same-origin'})" in ownership_command
+    assert "new URL('/_ui/search/ui/UnifiedSearchResults',location.origin)" in (
+        ownership_command
+    )
+    assert "/services/data" not in ownership_command
+    assert "Example" not in ownership_command
     assert "Authorization" not in command_text
     assert "Cookie" not in command_text
 
@@ -330,97 +350,94 @@ def test_ownership_detection_does_not_depend_on_english_labels() -> None:
     assert "contact name" not in ownership_command.lower()
     assert "lead name" not in ownership_command.lower()
     assert "detailMatch" in ownership_command
-    assert "getElementById(type+'_body')" in ownership_command
+    assert "doc.getElementById(type+'_body')" in ownership_command
     assert "'showMore-'+prefix" in ownership_command
     # Opportunity and Activity grids link Accounts too; only the three
     # ownership objects' blocks are read.
     assert "querySelectorAll('table')]" not in ownership_command
 
 
-def test_ownership_search_pages_objects_the_summary_reports_as_incomplete() -> None:
-    # The all-objects summary page shows five rows per object. An object it
-    # marks as having more is re-read from its own paged results, and records
-    # already seen on the summary are not repeated.
-    base = (
-        "https://acme.my.salesforce.com/_ui/search/ui/UnifiedSearchResults"
-        "?searchType=2&str=Acme"
+def test_ownership_search_reads_paged_objects_from_their_own_pages() -> None:
+    # The summary shows five rows per object. An object it marks as having
+    # more comes back from its own pages, in their order, without repeats.
+    summary = [
+        _hit("Account", "001000000000001AAA"),
+        _hit("Contact", "003000000000001AAA"),
+    ]
+    runner = FakeRunner(
+        ownership_page=lambda url: _ownership_result(
+            summary, ["Account"], {"Account": (_ids("001", 3), True)}
+        )
     )
-    pages = {
-        base: _ownership_page(
-            [
-                _hit("Account", "001000000000001AAA"),
-                _hit("Contact", "003000000000001AAA"),
-            ],
-            ["Account"],
-        ),
-        f"{base}&sen=001&fen=001&initialViewMode=detail&offset=0": _ownership_page(
-            [
-                _hit("Account", "001000000000001AAA"),
-                _hit("Account", "001000000000002AAA"),
-            ],
-            ["Account"],
-        ),
-        f"{base}&sen=001&fen=001&initialViewMode=detail&offset=25": _ownership_page(
-            [_hit("Account", "001000000000003AAA")], []
-        ),
-    }
-    runner = FakeRunner(ownership_page=pages.__getitem__)
 
     result = _browser(runner).search_ownership("Acme")
 
     assert [record["id"] for record in result["records"]] == [
         "001000000000001AAA",
-        "003000000000001AAA",
         "001000000000002AAA",
         "001000000000003AAA",
+        "003000000000001AAA",
     ]
     assert result["truncated"] == []
-    assert runner.opened[1:-1] == list(pages)
-    assert [
-        script.split("const offset=", 1)[1].split(";", 1)[0]
-        for script in _ownership_scripts(runner)
-    ] == ["0", "0", "25"]
+
+
+def test_ownership_search_keeps_summary_rows_missing_from_the_pages() -> None:
+    runner = FakeRunner(
+        ownership_page=lambda url: _ownership_result(
+            _ids("00Q", 1, start=900), ["Lead"], {"Lead": (_ids("00Q", 2), True)}
+        )
+    )
+
+    result = _browser(runner).search_ownership("Acme")
+
+    assert [record["id"][-6:] for record in result["records"]] == [
+        "001AAA",
+        "002AAA",
+        "900AAA",
+    ]
 
 
 def test_ownership_search_reports_objects_still_incomplete_after_page_bound() -> None:
-    serial = iter(range(1, 1000))
-
-    def page(url: str) -> object:
-        if "&sen=00Q" not in url:
-            return _ownership_page([], ["Lead"])
-        return _ownership_page([_hit("Lead", f"00Q{next(serial):012d}AAA")], ["Lead"])
-
-    runner = FakeRunner(ownership_page=page)
+    runner = FakeRunner(
+        ownership_page=lambda url: _ownership_result(
+            [], ["Lead"], {"Lead": (_ids("00Q", 100), False)}
+        )
+    )
 
     result = _browser(runner).search_ownership("Acme")
 
     assert result["truncated"] == ["Lead"]
-    assert len(result["records"]) == 4
-    assert [url.rsplit("offset=", 1)[1] for url in runner.opened[2:-1]] == [
-        "0",
-        "25",
-        "50",
-        "75",
-    ]
+    assert len(result["records"]) == 100
 
 
-def test_ownership_search_pages_every_object_the_summary_reports() -> None:
-    # Paging one object must not lose the summary's verdict on the others.
-    serial = iter(range(1, 1000))
-    prefixes = {"Account": "001", "Contact": "003", "Lead": "00Q"}
-
-    def page(url: str) -> object:
-        if "&sen=" not in url:
-            return _ownership_page([], ["Account", "Contact", "Lead"])
-        record_type = next(
-            name for name, prefix in prefixes.items() if f"&sen={prefix}" in url
+def test_ownership_search_caps_each_object_at_the_page_bound() -> None:
+    # Summary rows the pages lacked must not push an object past 100 records.
+    runner = FakeRunner(
+        ownership_page=lambda url: _ownership_result(
+            _ids("001", 2, start=500),
+            ["Account"],
+            {"Account": (_ids("001", 100), True)},
         )
-        prefix = prefixes[record_type]
-        hit = _hit(record_type, f"{prefix}{next(serial):012d}AAA")
-        last = url.endswith("offset=25")
-        return _ownership_page([hit], [] if last else [record_type])
+    )
 
-    runner = FakeRunner(ownership_page=page)
+    result = _browser(runner).search_ownership("Acme")
+
+    assert len(result["records"]) == 100
+    assert result["truncated"] == ["Account"]
+
+
+def test_ownership_search_merges_every_paged_object() -> None:
+    runner = FakeRunner(
+        ownership_page=lambda url: _ownership_result(
+            [],
+            ["Account", "Contact", "Lead"],
+            {
+                "Account": (_ids("001", 2), True),
+                "Contact": (_ids("003", 2), True),
+                "Lead": (_ids("00Q", 2), True),
+            },
+        )
+    )
 
     result = _browser(runner).search_ownership("Acme")
 
@@ -435,14 +452,26 @@ def test_ownership_search_pages_every_object_the_summary_reports() -> None:
     ]
 
 
+def test_ownership_pages_that_do_not_match_the_summary_are_drift() -> None:
+    runner = FakeRunner(
+        ownership_page=lambda url: _ownership_result(
+            [], ["Account"], {"Contact": (_ids("003", 1), True)}
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="pagination signal changed"):
+        _browser(runner).search_ownership("Acme")
+
+
 def test_scoped_ownership_page_returning_another_object_is_drift() -> None:
-    def page(url: str) -> object:
-        if "&sen=001" in url:
-            return _ownership_page([_hit("Contact", "003000000000001AAA")], [])
-        return _ownership_page([], ["Account"])
+    runner = FakeRunner(
+        ownership_page=lambda url: _ownership_result(
+            [], ["Account"], {"Account": (_ids("003", 1), True)}
+        )
+    )
 
     with pytest.raises(RuntimeError, match="scoped search returned another object"):
-        _browser(FakeRunner(ownership_page=page)).search_ownership("Acme")
+        _browser(runner).search_ownership("Acme")
 
 
 def test_ownership_search_page_that_did_not_render_is_drift_not_empty() -> None:
@@ -452,6 +481,47 @@ def test_ownership_search_page_that_did_not_render_is_drift_not_empty() -> None:
 
     with pytest.raises(RuntimeError, match="did not render"):
         _browser(runner).search_ownership("Acme")
+
+
+def test_consecutive_searches_skip_the_lightning_round_trip() -> None:
+    runner = FakeRunner()
+    browser = _browser(runner)
+    home = "https://acme.lightning.force.com/lightning/page/home"
+    search = (
+        "https://acme.my.salesforce.com/_ui/search/ui/UnifiedSearchResults"
+        "?searchType=2&str="
+    )
+
+    browser.search_ownership("Acme")
+    browser.search_ownership("Beta")
+    browser.get_account_pipeline("001000000000000AAA")
+    browser.get_account_pipeline("001000000000000AAA")
+    assert browser.session_is_active()
+
+    # Lightning-origin reads go home once after the searches, then stay.
+    assert runner.opened == [home, f"{search}Acme", f"{search}Beta", home]
+
+
+def test_identity_check_after_a_search_runs_on_the_lightning_origin() -> None:
+    runner = FakeRunner()
+    browser = _browser(runner)
+
+    browser.search_ownership("Acme")
+    browser.session_is_active()
+
+    identity_checks = [
+        index
+        for index, call in enumerate(runner.calls)
+        if "chatter/users/me" in " ".join(call)
+    ]
+    home_opens = [
+        index
+        for index, call in enumerate(runner.calls)
+        if " open https://acme.lightning.force.com/lightning/page/home" in (
+            " " + " ".join(call)
+        )
+    ]
+    assert home_opens[-1] < identity_checks[-1]
 
 
 def test_ownership_search_url_encodes_literal_term() -> None:

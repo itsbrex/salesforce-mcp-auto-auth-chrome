@@ -6,7 +6,14 @@
     "ownership_search": {
       "method": "NAVIGATE",
       "path_template": "/_ui/search/ui/UnifiedSearchResults",
-      "query_keys": ["searchType", "str", "sen", "fen", "initialViewMode", "offset"],
+      "query_keys": ["searchType", "str"],
+      "page_requests": {
+        "method": "GET",
+        "path_template": "/_ui/search/ui/UnifiedSearchResults",
+        "query_keys": ["searchType", "str", "sen", "fen", "initialViewMode", "offset"],
+        "credentials": "same-origin",
+        "explicit_header_names": []
+      },
       "credentials": "browser_navigation",
       "explicit_header_names": [],
       "browser_owned_header_names": [
@@ -21,7 +28,7 @@
         "sec-fetch-site",
         "user-agent"
       ],
-      "response_required_keys": ["more", "records", "sourceType", "totalSize"],
+      "response_required_keys": ["pages", "sourceType", "summary"],
       "record_fields": [
         "type",
         "id",
